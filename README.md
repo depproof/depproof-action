@@ -33,7 +33,9 @@ jobs:
         if: always()
         with:
           name: bomer-reports
-          path: bomer-*.json
+          path: |
+            bomer-*.json
+            bomer-report*.html
 ```
 
 That's it. On every PR + push to main, bomer scans your repo and fails the build if any CRITICAL vulnerability is present.
@@ -64,6 +66,9 @@ All inputs are optional. The defaults handle most repos.
 
     # Where to write SBOM artifacts. Default: $GITHUB_WORKSPACE
     output-dir: reports
+
+    # Also emit a human-readable HTML report (bomer-report.html). Default: true
+    html: true
 ```
 
 ## What gets scanned by default
@@ -86,6 +91,7 @@ After a successful run, bomer writes to the workspace (or `output-dir` if set):
 |---|---|
 | `bomer-summary.json` | Combined results: per-manifest counts, vuln/license totals, fail/pass per manifest |
 | `bomer-sbom-<path>.json` | CycloneDX 1.6 SBOM for each scanned manifest. Slashes in path replaced with `--`. |
+| `bomer-report.html` | Human-readable report (vulnerabilities + dependencies + license policy). Self-contained — opens offline, no network or JS. On multi-manifest scans this is an index linking one `bomer-report-<path>.html` per manifest. Set `html: false` to skip. |
 
 The `bomer-summary.json` schema is stable for v1 — safe to consume from downstream steps:
 

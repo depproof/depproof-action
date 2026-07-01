@@ -36,6 +36,10 @@ inputs:
   output-dir:
     description: 'Directory to write per-manifest SBOMs + bomer-summary.json. Default: GITHUB_WORKSPACE.'
     required: false
+  html:
+    description: 'Also write a self-contained HTML report (bomer-report.html) next to the JSON. Opens offline. Default: true.'
+    required: false
+    default: 'true'
 
 # Composite action: shell-builds the bomer args based on inputs, then invokes the Docker image
 # via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
@@ -89,6 +93,11 @@ runs:
         EXCLUDE="${{ inputs.exclude }}"
         if [ -n "$EXCLUDE" ]; then
           ARGS+=("--exclude" "$EXCLUDE")
+        fi
+
+        # Emit the human-readable HTML report unless explicitly disabled.
+        if [ "${{ inputs.html }}" = "true" ]; then
+          ARGS+=("--html")
         fi
 
         # Pull + run. The image is a single-arch / multi-arch manifest at ghcr.io/bomer-labs/bomer:v0.
