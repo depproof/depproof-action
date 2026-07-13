@@ -1,6 +1,6 @@
-name: 'bomer'
+name: 'depproof'
 description: 'Dependency vulnerability + license audit for Maven, Gradle, and npm — runs entirely inside your CI, no data leaves the runner.'
-author: 'bomer-labs'
+author: 'depproof'
 branding:
   icon: 'shield'
   color: 'blue'
@@ -34,20 +34,20 @@ inputs:
     required: false
     default: 'critical'
   output-dir:
-    description: 'Directory to write per-manifest SBOMs + bomer-summary.json. Default: GITHUB_WORKSPACE.'
+    description: 'Directory to write per-manifest SBOMs + depproof-summary.json. Default: GITHUB_WORKSPACE.'
     required: false
   html:
-    description: 'Also write a self-contained HTML report (bomer-report.html) next to the JSON. Opens offline. Default: true.'
+    description: 'Also write a self-contained HTML report (depproof-report.html) next to the JSON. Opens offline. Default: true.'
     required: false
     default: 'true'
 
-# Composite action: shell-builds the bomer args based on inputs, then invokes the Docker image
+# Composite action: shell-builds the depproof args based on inputs, then invokes the Docker image
 # via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
 # pass args based on which input the user provided.
 runs:
   using: 'composite'
   steps:
-    - name: Run bomer
+    - name: Run depproof
       shell: bash
       run: |
         set -euo pipefail
@@ -58,7 +58,7 @@ runs:
         ROOT="${{ inputs.root }}"
         ROOT="${ROOT:-${GITHUB_WORKSPACE}}"
 
-        # Build the bomer args based on which input was provided.
+        # Build the depproof args based on which input was provided.
         ARGS=("scan")
 
         FILE="${{ inputs.file }}"
@@ -66,7 +66,7 @@ runs:
         DISCOVER="${{ inputs.discover }}"
 
         if [ -n "$FILE" ] && [ -n "$FILES" ]; then
-          echo "::error::bomer-action: 'file' and 'files' are mutually exclusive"; exit 2
+          echo "::error::depproof-action: 'file' and 'files' are mutually exclusive"; exit 2
         fi
 
         if [ -n "$FILE" ]; then
@@ -100,11 +100,11 @@ runs:
           ARGS+=("--html")
         fi
 
-        # Pull + run. The image is a single-arch / multi-arch manifest at ghcr.io/bomer-labs/bomer:v0.
+        # Pull + run. The image is a single-arch / multi-arch manifest at ghcr.io/depproof/depproof:v0.
         # `--rm` removes the container after exit. We mount the workspace read-write so SBOMs can
-        # be written back; bomer doesn't modify the source itself.
+        # be written back; depproof doesn't modify the source itself.
         docker run --rm \
           -v "${GITHUB_WORKSPACE}":/workspace \
           -w /workspace \
-          ghcr.io/bomer-labs/bomer:v0 \
+          ghcr.io/depproof/depproof:v0 \
           "${ARGS[@]}"
