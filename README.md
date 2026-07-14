@@ -100,7 +100,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 ```json
 {
   "schemaVersion": 1,
-  "depproofVersion": "0.1.2",
+  "depproofVersion": "0.1.4",
   "scannedAt": "2026-06-12T14:53:25Z",
   "rootDir": "/github/workspace",
   "manifests": [
