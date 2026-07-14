@@ -1,5 +1,5 @@
-name: 'depproof'
-description: 'Dependency vulnerability + license audit for Maven, Gradle, and npm — runs entirely inside your CI, no data leaves the runner.'
+name: 'depproof — Maven & Gradle Dependency & License Audit'
+description: 'Scan Maven & Gradle dependencies for vulnerabilities and license risk. Deep transitive resolution, CycloneDX SBOM + PR gate.'
 author: 'depproof'
 branding:
   icon: 'shield'

@@ -1,15 +1,15 @@
 # depproof-action
 
-Dependency vulnerability + license audit for Maven, Gradle, and npm — **runs entirely inside your CI runner, no data leaves the runner**.
+Dependency vulnerability + license audit for **Maven & Gradle** — the scan runs inside your CI runner; **your source and manifests never leave it**.
 
 [depproof](https://github.com/depproof/depproof) scans your dependency manifests against [OSV.dev](https://osv.dev) (vulnerabilities) and the full [SPDX license corpus](https://spdx.org/licenses/) + [ClearlyDefined.io](https://clearlydefined.io) (licenses), emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
 
 ## Why depproof
 
-- **Privacy-first.** The scan happens inside your GitHub Actions runner. Only public APIs (Maven Central, npm registry, OSV.dev) are called — never anything you control. Your pom.xml / build.gradle.kts / package-lock.json never leaves the runner.
-- **Monorepo-aware.** Auto-discovers every manifest in your repo by default (Maven, Gradle, npm, in any subdirectory). Multi-module Maven projects are bundled correctly so child modules resolve their parent locally.
+- **Privacy-first.** The scan happens inside your GitHub Actions runner. Only public APIs (Maven Central, OSV.dev) are called — never anything you control. Your pom.xml / build.gradle.kts never leaves the runner.
+- **Monorepo-aware.** Auto-discovers every manifest in your repo by default (Maven & Gradle, in any subdirectory). Multi-module Maven projects are bundled correctly so child modules resolve their parent locally.
 - **Accurate transitive resolution.** Maven projects use Aether (the same engine `mvn` uses). Gradle projects detect Spring Boot / Kotlin / Quarkus plugin BOMs and apply `extra["xxx.version"]` overrides correctly — no more false-positive CVEs against versions you've already patched.
-- **Open source, free.** Apache-2.0 licensed. No signup, no API key, no quota.
+- **Free for small businesses.** Source-available under the PolyForm Small Business License — free for organizations under $1M revenue / 100 people. No signup, no API key, no quota. (Larger orgs: commercial license.)
 
 ## Quick start
 
@@ -170,7 +170,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Source-available under the **PolyForm Small Business License 1.0.0** — free to use for organizations with fewer than 100 people **and** under $1M USD annual revenue. Larger organizations require a commercial license (contact licensing@depproof.com). This is source-available, **not** open source. See [LICENSE](LICENSE).
 
 ## Privacy
 
