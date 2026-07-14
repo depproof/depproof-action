@@ -1,15 +1,15 @@
-# depproof-action
+# depproof — dependency vulnerability & license audit for Maven & Gradle
 
-Dependency vulnerability + license audit for **Maven & Gradle** — the scan runs inside your CI runner; **your source and manifests never leave it**.
+Catch vulnerable and non-compliant dependencies in your pull request — the scan runs entirely inside your CI runner, and **your source and manifests never leave it**.
 
-[depproof](https://github.com/depproof/depproof) scans your dependency manifests against [OSV.dev](https://osv.dev) (vulnerabilities) and the full [SPDX license corpus](https://spdx.org/licenses/) + [ClearlyDefined.io](https://clearlydefined.io) (licenses), emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
+depproof scans your dependency manifests against [OSV.dev](https://osv.dev) (vulnerabilities) and the full [SPDX license corpus](https://spdx.org/licenses/) + [ClearlyDefined.io](https://clearlydefined.io) (licenses), emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
 
 ## Why depproof
 
-- **Privacy-first.** The scan happens inside your GitHub Actions runner. Only public APIs (Maven Central, OSV.dev) are called — never anything you control. Your pom.xml / build.gradle.kts never leaves the runner.
+- **Privacy-first.** The scan runs inside your GitHub Actions runner. Your `pom.xml` / `build.gradle.kts` never leave it — only individual package coordinates are checked against public registries and vulnerability/license databases. No source uploaded, no account, no telemetry.
 - **Monorepo-aware.** Auto-discovers every manifest in your repo by default (Maven & Gradle, in any subdirectory). Multi-module Maven projects are bundled correctly so child modules resolve their parent locally.
 - **Accurate transitive resolution.** Maven projects use Aether (the same engine `mvn` uses). Gradle projects detect Spring Boot / Kotlin / Quarkus plugin BOMs and apply `extra["xxx.version"]` overrides correctly — no more false-positive CVEs against versions you've already patched.
-- **Free for small businesses.** Source-available under the PolyForm Small Business License — free for organizations under $1M revenue / 100 people. No signup, no API key, no quota. (Larger orgs: commercial license.)
+- **Free for small businesses.** No cost for organizations under $1M annual revenue — no signup, no API key, no quota. (Larger orgs: commercial license — licensing@depproof.com.)
 
 ## Quick start
 
@@ -53,7 +53,10 @@ All inputs are optional. The defaults handle most repos.
     # OR multiple explicit files (newline or comma-separated)
     files: |
       backend/pom.xml
-      frontend/package-lock.json
+      services/api/pom.xml
+
+    # Auto-discover manifests under root (default: true). Set false to require file/files.
+    discover: true
 
     # Severity threshold for failure: critical (default) | high | medium | low | none
     fail-on: critical
@@ -76,9 +79,8 @@ All inputs are optional. The defaults handle most repos.
 Auto-discovery finds these manifests anywhere in your repo:
 - `pom.xml` (Maven)
 - `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle)
-- `package-lock.json`, `yarn.lock`, `package.json` (npm)
 
-And **skips** these directories (no way to scan their contents):
+And **skips** these directories (build output and vendored code — nothing to audit there):
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`
 
 Use `exclude` to add custom glob patterns on top of the defaults.
@@ -98,7 +100,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 ```json
 {
   "schemaVersion": 1,
-  "depproofVersion": "0.1.0",
+  "depproofVersion": "0.1.2",
   "scannedAt": "2026-06-12T14:53:25Z",
   "rootDir": "/github/workspace",
   "manifests": [
@@ -109,7 +111,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
       "direct": 29,
       "transitive": 103,
       "vulns": { "critical": 0, "high": 4, "medium": 5, "low": 4 },
-      "licenses": { "forbidden": 0, "review": 15, "allowed": 116, "unknown": 0 },
+      "licenses": { "forbidden": 0, "review": 15, "allowed": 117, "unknown": 0 },
       "sbomFile": "depproof-sbom-backend--pom.xml.json",
       "fail": false,
       "isParentPom": false,
@@ -125,23 +127,17 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 
 - `0` — scan clean (or no findings exceed `fail-on` threshold)
 - `1` — findings exceed `fail-on` threshold (one or more manifests failed)
-- `2` — scan error (bad args, unsupported file, no manifests found in discovery mode)
+- `2` — scan error (bad arguments or unsupported file)
 
 ## Examples
 
-### Monorepo with both Java and JavaScript
+### Monorepo / multi-module project
 
 ```yaml
 - uses: depproof/depproof-action@v1
-  # Discovery default — scans every manifest under repo root.
-```
-
-### Multi-module Maven project
-
-```yaml
-- uses: depproof/depproof-action@v1
-  # Discovery automatically detects parent + child POMs and bundles them.
-  # Child modules resolve their parent locally — no Maven Central round-trip.
+  # Discovery default — scans every Maven/Gradle manifest under repo root.
+  # Multi-module Maven projects: parent + child POMs are auto-detected and bundled,
+  # so child modules resolve their parent locally (no Maven Central round-trip).
 ```
 
 ### Only scan one specific manifest
@@ -165,22 +161,21 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 ```yaml
 - uses: depproof/depproof-action@v1
   with:
-    fail-on: none  # always exit 0; results still in artifacts
+    fail-on: none  # never fails on findings (scan errors still exit 2); results still in artifacts
 ```
 
 ## License
 
-Source-available under the **PolyForm Small Business License 1.0.0** — free to use for organizations with fewer than 100 people **and** under $1M USD annual revenue. Larger organizations require a commercial license (contact licensing@depproof.com). This is source-available, **not** open source. See [LICENSE](LICENSE).
+depproof is proprietary software, **free to use** for organizations with under $1M USD annual revenue. Larger organizations require a commercial license (contact licensing@depproof.com). See [LICENSE](LICENSE).
 
 ## Privacy
 
-depproof makes outbound calls to the following public APIs (and nothing else):
+depproof makes outbound calls only to these public services:
 
 - `repo.maven.apache.org` — Maven Central, for transitive resolution
-- `registry.npmjs.org` — npm registry, for npm transitive resolution
-- `api.osv.dev` — OSV.dev vulnerability database, for CVE lookups
-- `api.clearlydefined.io` — ClearlyDefined.io license metadata (fallback when SPDX corpus doesn't match)
+- `api.osv.dev` — OSV.dev vulnerability database
+- `api.clearlydefined.io` — ClearlyDefined.io license metadata (fallback when the SPDX corpus doesn't match)
 
 No telemetry. No phone-home. No API keys.
 
-Source code: [github.com/depproof/depproof](https://github.com/depproof/depproof) — audit the [Dockerfile](https://github.com/depproof/depproof/blob/main/backend/Dockerfile) and the [action.yml](./action.yml) (~80 lines combined) to verify.
+The action is a thin wrapper around a self-contained Docker image (`ghcr.io/depproof/depproof`); see [action.yml](./action.yml).
