@@ -178,4 +178,4 @@ depproof makes outbound calls only to these public services:
 
 No telemetry. No phone-home. No API keys.
 
-The action is a thin wrapper around a self-contained Docker image (`ghcr.io/depproof/depproof`); see [action.yml](./action.yml).
+depproof runs as a self-contained Docker image (`ghcr.io/depproof/depproof`) — no local Java, Maven, or Gradle install required on your runner. See [action.yml](./action.yml) for the exact invocation.
