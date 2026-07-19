@@ -40,6 +40,16 @@ inputs:
     description: 'Also write a self-contained HTML report (depproof-report.html) next to the JSON. Opens offline. Default: true.'
     required: false
     default: 'true'
+  report-to:
+    description: 'Optional https:// URL of your self-hosted depproof-hub to POST the report to (e.g. https://hub.example.com/api/v1/scans). Requires report-token.'
+    required: false
+  report-token:
+    description: 'Ingest token for report-to (pass a secret). Forwarded to the engine only via $DEPPROOF_REPORT_TOKEN, never on the command line.'
+    required: false
+  report-required:
+    description: "If 'true', a failed upload fails the build (engine exit 3). Default: best-effort (warn only)."
+    required: false
+    default: 'false'
 
 # Composite action: shell-builds the depproof args based on inputs, then invokes the Docker image
 # via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
@@ -49,6 +59,11 @@ runs:
   steps:
     - name: Run depproof
       shell: bash
+      env:
+        # Secret via env (not script interpolation) so it never lands in a log or command line.
+        DEPPROOF_REPORT_TOKEN: ${{ inputs.report-token }}
+        INPUT_REPORT_TO: ${{ inputs.report-to }}
+        INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
       run: |
         set -euo pipefail
 
@@ -100,10 +115,25 @@ runs:
           ARGS+=("--html")
         fi
 
-        # Pull + run. The image is a single-arch / multi-arch manifest at ghcr.io/depproof/depproof:v0.
+        # Optional push to a self-hosted depproof-hub. Metadata comes from the GitHub context
+        # (engine stays headless); the token is forwarded via a valueless -e, never on argv.
+        DOCKER_ENV=()
+        if [ -n "${INPUT_REPORT_TO:-}" ]; then
+          ARGS+=("--report-to" "$INPUT_REPORT_TO" "--report-repo" "${GITHUB_REPOSITORY:-}" \
+                 "--report-commit" "${GITHUB_SHA:-}" "--report-branch" "${GITHUB_REF_NAME:-}" \
+                 "--report-event" "${GITHUB_EVENT_NAME:-}")
+          [ "${INPUT_REPORT_REQUIRED:-false}" = "true" ] && ARGS+=("--report-required")
+          DOCKER_ENV=("-e" "DEPPROOF_REPORT_TOKEN")
+          if [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+            echo "::warning::depproof-action: report-to is set but report-token is empty — the hub upload will be skipped (set report-required: true to fail the build instead)."
+          fi
+        fi
+
+        # Pull + run. The image is a multi-arch manifest at ghcr.io/depproof/depproof:v0.
         # `--rm` removes the container after exit. We mount the workspace read-write so SBOMs can
         # be written back; depproof doesn't modify the source itself.
         docker run --rm \
+          "${DOCKER_ENV[@]}" \
           -v "${GITHUB_WORKSPACE}":/workspace \
           -w /workspace \
           ghcr.io/depproof/depproof:v0 \
