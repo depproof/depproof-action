@@ -9,7 +9,7 @@ inputs:
   file:
     description: |
       Single dependency manifest to scan. Mutually exclusive with `files` and `discover`.
-      Examples: pom.xml, backend/build.gradle.kts, package-lock.json.
+      Examples: pom.xml, build.gradle.kts, package-lock.json, poetry.lock, requirements.txt.
     required: false
   files:
     description: |

@@ -139,7 +139,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 
 ```yaml
 - uses: depproof/depproof-action@v1
-  # Discovery default — scans every Maven/Gradle manifest under repo root.
+  # Discovery default — scans every Maven/Gradle/npm/Python manifest under repo root.
   # Multi-module Maven projects: parent + child POMs are auto-detected and bundled,
   # so child modules build on their parent locally (no Maven Central round-trip).
 ```
