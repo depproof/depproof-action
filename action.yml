@@ -1,5 +1,5 @@
 name: 'depproof — Maven, Gradle, npm & Python Dependency & License Audit'
-description: 'Scan Maven, Gradle, npm & Python dependencies for vulnerabilities and license risk. Deep transitive resolution, CycloneDX SBOM + PR gate.'
+description: 'Scan Maven, Gradle, npm & Python deps for vulnerabilities & license risk. Transitive resolution, CycloneDX SBOM, PR gate.'
 author: 'depproof'
 branding:
   icon: 'shield'
