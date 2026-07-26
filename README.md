@@ -1,8 +1,8 @@
-# depproof — dependency vulnerability & license audit for Maven, Gradle & npm
+# depproof — dependency vulnerability & license audit for Maven, Gradle, npm & Python
 
 Catch vulnerable and non-compliant dependencies in your pull request — the scan runs entirely inside your CI runner, and **your source and manifests never leave it**.
 
-depproof scans your Maven, Gradle, and npm/pnpm/yarn dependency manifests against [OSV.dev](https://osv.dev) for known vulnerabilities and public [SPDX](https://spdx.org/licenses/) license data for licensing, emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
+depproof scans your Maven, Gradle, npm/pnpm/yarn, and Python dependency manifests against [OSV.dev](https://osv.dev) for known vulnerabilities and public [SPDX](https://spdx.org/licenses/) license data for licensing, emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
 
 > 📖 **Full docs, guides & license explainers: [depproof.com](https://depproof.com).**
 
@@ -82,6 +82,7 @@ Auto-discovery finds these manifests anywhere in your repo:
 - `pom.xml` (Maven)
 - `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle)
 - `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
+- `poetry.lock`, `pdm.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` (Python) — resolved from the lockfile; a lockless `pyproject.toml` is a minimum-version fallback, so commit a lockfile (or generate one in a prior CI step) for an exact result
 
 And **skips** these directories (build output and vendored code — nothing to audit there):
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`
