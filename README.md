@@ -99,6 +99,25 @@ After a successful run, depproof writes to the workspace (or `output-dir` if set
 | `depproof-sbom-<path>.json` | CycloneDX 1.6 SBOM for each scanned manifest. Slashes in path replaced with `--`. |
 | `depproof-report.html` | Human-readable report (vulnerabilities + dependencies + license policy). Self-contained — opens offline, no network or JS. On multi-manifest scans this is an index linking one `depproof-report-<path>.html` per manifest. Set `html: false` to skip. |
 
+> ⚠️ **These files land in the runner's workspace, which GitHub discards when the job ends.** The
+> action does **not** upload them for you. To make the reports **downloadable from the run**, add an
+> [`actions/upload-artifact`](https://github.com/actions/upload-artifact) step (as in
+> [Quick start](#quick-start)):
+>
+> ```yaml
+>       - uses: actions/upload-artifact@v4
+>         if: always()   # upload even when the scan exits non-zero on findings
+>         with:
+>           name: depproof-reports
+>           path: |
+>             depproof-*.json
+>             depproof-report*.html
+> ```
+>
+> Pushing to a self-hosted hub (the `report-to` input) is a **separate** channel: it sends the summary
+> to your hub for org-wide dashboards and does **not** create downloadable run artifacts. Use the
+> `upload-artifact` step, `report-to`, or both — they're independent.
+
 The `depproof-summary.json` schema is stable for v1 — safe to consume from downstream steps:
 
 ```json
