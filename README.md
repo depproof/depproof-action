@@ -175,9 +175,9 @@ depproof is proprietary software, **free to use** for organizations with under $
 
 depproof makes outbound calls only to these public services:
 
-- `repo.maven.apache.org` — Maven Central, for transitive resolution
-- `api.osv.dev` — OSV.dev vulnerability database
-- `api.clearlydefined.io` — ClearlyDefined.io license metadata (fallback when the SPDX corpus doesn't match)
+- `repo.maven.apache.org` — Maven Central (public package metadata)
+- `api.osv.dev` — OSV.dev (public vulnerability data)
+- `api.clearlydefined.io` — ClearlyDefined.io (public license metadata)
 
 No telemetry. No phone-home. No API keys.
 
