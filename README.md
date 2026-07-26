@@ -1,14 +1,16 @@
-# depproof — dependency vulnerability & license audit for Maven & Gradle
+# depproof — dependency vulnerability & license audit for Maven, Gradle & npm
 
 Catch vulnerable and non-compliant dependencies in your pull request — the scan runs entirely inside your CI runner, and **your source and manifests never leave it**.
 
-depproof scans your dependency manifests against [OSV.dev](https://osv.dev) (vulnerabilities) and the full [SPDX license corpus](https://spdx.org/licenses/) + [ClearlyDefined.io](https://clearlydefined.io) (licenses), emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
+depproof scans your Maven, Gradle, and npm/pnpm/yarn dependency manifests against [OSV.dev](https://osv.dev) (vulnerabilities) and the full [SPDX license corpus](https://spdx.org/licenses/) + [ClearlyDefined.io](https://clearlydefined.io) (licenses), emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
+
+> 📖 **Full docs, guides & license explainers: [depproof.com](https://depproof.com).**
 
 ## Why depproof
 
-- **Privacy-first.** The scan runs inside your GitHub Actions runner. Your `pom.xml` / `build.gradle.kts` never leave it — only individual package coordinates are checked against public registries and vulnerability/license databases. No source uploaded, no account, no telemetry.
-- **Monorepo-aware.** Auto-discovers every manifest in your repo by default (Maven & Gradle, in any subdirectory). Multi-module Maven projects are bundled correctly so child modules resolve their parent locally.
-- **Accurate transitive resolution.** Maven projects use Aether (the same engine `mvn` uses). Gradle projects detect Spring Boot / Kotlin / Quarkus plugin BOMs and apply `extra["xxx.version"]` overrides correctly — no more false-positive CVEs against versions you've already patched.
+- **Privacy-first.** The scan runs inside your GitHub Actions runner. Your `pom.xml` / `build.gradle.kts` / `package-lock.json` never leave it — only individual package coordinates are checked against public registries and vulnerability/license databases. No source uploaded, no account, no telemetry.
+- **Monorepo-aware.** Auto-discovers every manifest in your repo by default (Maven, Gradle & npm/pnpm/yarn, in any subdirectory). Multi-module Maven projects are handled correctly so child modules build on their parent.
+- **Accurate transitive resolution.** Resolves the full transitive dependency tree so it matches what your build actually ships — Spring Boot / Kotlin / Quarkus managed versions included — so you don't get false-positive CVEs against versions you've already patched.
 - **Free for small businesses.** No cost for organizations under $1M annual revenue — no signup, no API key, no quota. (Larger orgs: commercial license — licensing@depproof.com.)
 
 ## Quick start
@@ -79,6 +81,7 @@ All inputs are optional. The defaults handle most repos.
 Auto-discovery finds these manifests anywhere in your repo:
 - `pom.xml` (Maven)
 - `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle)
+- `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
 
 And **skips** these directories (build output and vendored code — nothing to audit there):
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`
@@ -137,7 +140,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 - uses: depproof/depproof-action@v1
   # Discovery default — scans every Maven/Gradle manifest under repo root.
   # Multi-module Maven projects: parent + child POMs are auto-detected and bundled,
-  # so child modules resolve their parent locally (no Maven Central round-trip).
+  # so child modules build on their parent locally (no Maven Central round-trip).
 ```
 
 ### Only scan one specific manifest
@@ -179,3 +182,7 @@ depproof makes outbound calls only to these public services:
 No telemetry. No phone-home. No API keys.
 
 depproof runs as a self-contained Docker image (`ghcr.io/depproof/depproof`) — no local Java, Maven, or Gradle install required on your runner. See [action.yml](./action.yml) for the exact invocation.
+
+---
+
+📖 License explainers, SBOM & SCA guides, and full documentation → **[depproof.com](https://depproof.com)**
