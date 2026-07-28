@@ -74,6 +74,17 @@ All inputs are optional. The defaults handle most repos.
 
     # Also emit a human-readable HTML report (depproof-report.html). Default: true
     html: true
+
+    # --- Self-hosted hub (optional) ---
+    # POST each scan report to your depproof-hub for org-wide governance.
+    report-to: https://hub.example.com/api/v1/scans
+    report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
+
+    # Online-mode CI gate: fetch the active waiver set from the hub at scan time and suppress
+    # centrally-waived findings from the gate (the SBOM/report stay raw). Requires report-to +
+    # report-token. Fail-closed: if the hub is unreachable, no waivers are applied and the gate
+    # stays strict — so an unreachable hub can never silently turn a red build green.
+    waivers-online: true
 ```
 
 ## What gets scanned by default
