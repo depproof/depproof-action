@@ -1,8 +1,8 @@
-# depproof — dependency vulnerability & license audit for Maven, Gradle, npm & Python
+# depproof — dependency vulnerability & license audit for Maven, Gradle, npm, Python & Go
 
 Catch vulnerable and non-compliant dependencies in your pull request — the scan runs entirely inside your CI runner, and **your source and manifests never leave it**.
 
-depproof scans your Maven, Gradle, npm/pnpm/yarn, and Python dependency manifests against [OSV.dev](https://osv.dev) for known vulnerabilities and public [SPDX](https://spdx.org/licenses/) license data for licensing, emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
+depproof scans your Maven, Gradle, npm/pnpm/yarn, Python, and Go dependency manifests against [OSV.dev](https://osv.dev) for known vulnerabilities and public [SPDX](https://spdx.org/licenses/) license data for licensing, emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
 
 > 📖 **Full docs, guides & license explainers: [depproof.com](https://depproof.com).**
 
@@ -75,6 +75,10 @@ All inputs are optional. The defaults handle most repos.
     # Also emit a human-readable HTML report (depproof-report.html). Default: true
     html: true
 
+    # Go: resolve the exact module graph with `go list -m -json all` when `go` is on the runner
+    # (falls back to a static go.mod parse otherwise). Default: true.
+    go-online: true
+
     # --- Self-hosted hub (optional) ---
     # POST each scan report to your depproof-hub for org-wide governance.
     report-to: https://hub.example.com/api/v1/scans
@@ -94,6 +98,7 @@ Auto-discovery finds these manifests anywhere in your repo:
 - `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle)
 - `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
 - `poetry.lock`, `pdm.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` (Python) — resolved from the lockfile; a lockless `pyproject.toml` is a minimum-version fallback, so commit a lockfile (or generate one in a prior CI step) for an exact result
+- `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -m -json all` on the runner for the **exact** resolved module graph (written to `go.deps.json`, preferred over `go.mod`); it falls back to a static `go.mod` parse (direct + `// indirect` requires, `replace` applied) when `go` isn't on the runner
 
 And **skips** these directories (build output and vendored code — nothing to audit there):
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`

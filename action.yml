@@ -58,6 +58,13 @@ inputs:
       the gate stays strict.
     required: false
     default: 'false'
+  go-online:
+    description: |
+      For Go modules, run `go list -m -json all` on the runner (when `go` is available) to resolve the
+      exact module graph instead of statically parsing `go.mod`. Best-effort: falls back to the static
+      `go.mod` parse if `go` is missing or the command fails. Default: true.
+    required: false
+    default: 'true'
 
 # Composite action: shell-builds the depproof args based on inputs, then invokes the Docker image
 # via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
@@ -73,6 +80,7 @@ runs:
         INPUT_REPORT_TO: ${{ inputs.report-to }}
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
         INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
+        INPUT_GO_ONLINE: ${{ inputs.go-online }}
       run: |
         set -euo pipefail
 
@@ -135,6 +143,26 @@ runs:
           DOCKER_ENV=("-e" "DEPPROOF_REPORT_TOKEN")
           if [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
             echo "::warning::depproof-action: report-to is set but report-token is empty — the hub upload will be skipped (set report-required: true to fail the build instead)."
+          fi
+        fi
+
+        # Go online resolution: when `go` is on the runner, produce the exact resolved module list
+        # (`go list -m -json all`) as `go.deps.json` next to each `go.mod`. Discovery then prefers
+        # `go.deps.json` over `go.mod`. Best-effort — falls back to the static `go.mod` parse if `go`
+        # is missing or `go list` errors ("declare it, don't guess", like Gradle static parse).
+        if [ "${INPUT_GO_ONLINE:-true}" = "true" ]; then
+          if command -v go >/dev/null 2>&1; then
+            while IFS= read -r gomod; do
+              gdir="$(dirname "$gomod")"
+              if ( cd "$gdir" && GOFLAGS=-mod=mod go list -m -json all > go.deps.json 2>/dev/null ); then
+                echo "depproof-action: resolved ${gdir}/go.mod via 'go list -m -json all'"
+              else
+                rm -f "${gdir}/go.deps.json"
+                echo "::warning::depproof-action: 'go list' failed in ${gdir} — using the static go.mod parse"
+              fi
+            done < <(find "${ROOT}" -name go.mod -not -path '*/vendor/*' 2>/dev/null)
+          else
+            echo "depproof-action: 'go' not on the runner — Go modules use the static go.mod parse"
           fi
         fi
 
