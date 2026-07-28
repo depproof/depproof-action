@@ -50,6 +50,14 @@ inputs:
     description: "If 'true', a failed upload fails the build (engine exit 3). Default: best-effort (warn only)."
     required: false
     default: 'false'
+  waivers-online:
+    description: |
+      If 'true', fetch the active waiver set from your self-hosted hub (report-to) at scan time and
+      suppress centrally-waived findings from the CI gate (the SBOM/report stay raw). Requires
+      report-to + report-token. Fail-closed: if the hub is unreachable, no waivers are applied and
+      the gate stays strict.
+    required: false
+    default: 'false'
 
 # Composite action: shell-builds the depproof args based on inputs, then invokes the Docker image
 # via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
@@ -64,6 +72,7 @@ runs:
         DEPPROOF_REPORT_TOKEN: ${{ inputs.report-token }}
         INPUT_REPORT_TO: ${{ inputs.report-to }}
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
+        INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
       run: |
         set -euo pipefail
 
@@ -126,6 +135,27 @@ runs:
           DOCKER_ENV=("-e" "DEPPROOF_REPORT_TOKEN")
           if [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
             echo "::warning::depproof-action: report-to is set but report-token is empty — the hub upload will be skipped (set report-required: true to fail the build instead)."
+          fi
+        fi
+
+        # Online-mode waivers: fetch the active waiver set from the hub and pass it to the gate so
+        # centrally-waived findings don't fail the build. FAIL-CLOSED — if the fetch fails we do NOT
+        # apply waivers (the gate stays strict) and warn, so an unreachable hub can never silently
+        # turn a red build green. The file lands in the workspace so it's visible inside the container.
+        if [ "${INPUT_WAIVERS_ONLINE:-false}" = "true" ]; then
+          if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+            echo "::warning::depproof-action: waivers-online needs report-to + report-token — skipping (gate stays strict)."
+          else
+            WAIVERS_URL="${INPUT_REPORT_TO%/scans}/waivers"
+            if curl -fsS --max-time 20 \
+                 -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+                 "${WAIVERS_URL}?repo=${GITHUB_REPOSITORY:-}" \
+                 -o "${GITHUB_WORKSPACE}/.depproof-waivers.json"; then
+              ARGS+=("--waivers" "/workspace/.depproof-waivers.json")
+              echo "depproof-action: applied hub waivers from ${WAIVERS_URL}"
+            else
+              echo "::warning::depproof-action: could not fetch waivers from the hub — gate stays strict (fail-closed)."
+            fi
           fi
         fi
 
