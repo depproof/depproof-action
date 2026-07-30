@@ -1,0 +1,10 @@
+# Generated scan output — written when running depproof locally in this directory during testing.
+# Never a source artifact; mirrors the rule in the engine repo.
+depproof-sbom*.json
+depproof-summary.json
+depproof-report*.html
+.depproof-waivers.json
+.depproof-enrich.json
+
+# macOS
+.DS_Store
