@@ -63,6 +63,11 @@ All inputs are optional. The defaults handle most repos.
     # Severity threshold for failure: critical (default) | high | medium | low | none
     fail-on: critical
 
+    # Additional gate rules, OR-ed with fail-on (see "CI gate" below). All optional.
+    fail-on-cvss: '7.5'               # fail on computed CVSS base score >= 7.5
+    fail-on-unknown: false            # fail on findings that could not be graded at all
+    fail-only-if-fix-available: false # only findings with a known fix can fail the build
+
     # Discovery root. Default: $GITHUB_WORKSPACE
     root: backend
 
@@ -162,10 +167,75 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 }
 ```
 
+## CI gate
+
+The gate decides which findings turn a scan into a failed build. Rules are **OR-ed** — a finding
+matching *any* active rule fails the build:
+
+| Input | Rule |
+|---|---|
+| `fail-on: <sev>` | severity at or above `critical` \| `high` \| `medium` \| `low`, or `none` to disable |
+| `fail-on-cvss: <n>` | computed CVSS base score >= `n` (0.0–10.0) |
+| `fail-on-unknown: true` | the finding could not be graded at all |
+| `fail-only-if-fix-available: true` | **narrows** all of the above to findings with a known fix |
+| `fail-on-kev: true` | the finding is listed as known-exploited (requires `enrich-online`) |
+
+Two details worth knowing:
+
+- **`fail-on` never matches ungraded findings.** An advisory with no scoreable CVSS vector and no
+  severity word is not silently treated as low or as critical — gate it explicitly with
+  `fail-on-unknown`.
+- **`fail-on-cvss` never matches a finding with no score.** An absent score is not a low score.
+  Combine it with `fail-on-unknown` if you want both covered.
+
+Waived findings (`waivers-online`) are dropped before any rule runs. The log always says which
+finding tripped which rule, and reports what was suppressed even when the build passes:
+
+```
+depproof — gate: severity high or above or CVSS score 7.0 or above
+  waivers:    2 vuln finding(s) suppressed from the gate by --waivers
+  result:     FAIL — 1 finding(s) tripped the gate
+    package-lock.json: CVE-2026-14257 high cvss 7.5  :brace-expansion:5.0.7 fix 5.0.8  [severity>=high, cvss>=7.0]
+```
+
+CVSS scores come from the advisory's CVSS vector, which is also recorded in the CycloneDX SBOM.
+
+### Gating on exploitation (requires a hub)
+
+Severity says how bad a vulnerability *could* be. It doesn't say whether anyone is actually using it —
+and plenty of actively-exploited vulnerabilities are rated only medium, so a `critical`-or-`high`
+threshold merges them without comment.
+
+With `enrich-online`, the action fetches known-exploited data from your self-hosted hub before the scan
+and applies it to findings. `fail-on-kev` then fails the build on those findings **regardless of
+severity**:
+
+```yaml
+- uses: depproof/depproof-action@v1
+  with:
+    report-to: https://hub.example.com/api/v1/scans
+    report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
+    enrich-online: true
+    fail-on-kev: true
+    fail-on: critical      # unchanged — KEV is an additional rule, not a replacement
+```
+
+Findings carry a KEV badge in the HTML report and a `depproof:kev` property in the SBOM.
+
+Three behaviours worth knowing:
+
+- **`fail-only-if-fix-available` does not narrow `fail-on-kev`.** A known-exploited finding with no
+  released fix is the most urgent thing in the report, not the one to suppress.
+- **Fail-closed.** If the hub is unreachable, nothing is applied, `fail-on-kev` does not gate, and the
+  log warns twice. The build falls back to your severity rules rather than reporting a clean result on
+  data it never received.
+- **Your findings stay local.** The hub returns the catalogue and the scan matches against it on the
+  runner, so the hub is never told which vulnerabilities your repo has.
+
 ## Exit codes
 
-- `0` — scan clean (or no findings exceed `fail-on` threshold)
-- `1` — findings exceed `fail-on` threshold (one or more manifests failed)
+- `0` — scan clean (no finding tripped the gate)
+- `1` — one or more findings tripped the gate
 - `2` — scan error (bad arguments or unsupported file)
 
 ## Examples
@@ -193,6 +263,24 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 - uses: depproof/depproof-action@v1
   with:
     fail-on: high
+```
+
+### Gate on exploitability score rather than the severity label
+
+```yaml
+- uses: depproof/depproof-action@v1
+  with:
+    fail-on: none          # turn off the severity rule
+    fail-on-cvss: '7.0'    # ...and gate on the computed CVSS base score instead
+```
+
+### Gate only on what your team can actually fix today
+
+```yaml
+- uses: depproof/depproof-action@v1
+  with:
+    fail-on: high
+    fail-only-if-fix-available: true  # a vuln with no released fix won't block the PR
 ```
 
 ### Use depproof in a non-blocking advisory mode

@@ -33,6 +33,25 @@ inputs:
     description: 'Severity threshold for failure: critical (default) | high | medium | low | none'
     required: false
     default: 'critical'
+  fail-on-cvss:
+    description: |
+      Also fail on findings whose computed CVSS base score is >= this value (0.0–10.0). OR-ed with
+      `fail-on`, so either rule matching fails the build. A finding with no CVSS score never matches
+      this rule (absent is not low) — use `fail-on-unknown` for ungraded findings. Unset by default.
+    required: false
+  fail-on-unknown:
+    description: |
+      If 'true', also fail on findings that could not be graded at all (no scoreable CVSS vector and
+      no severity word). Off by default so an ungraded advisory does not block a build unexpectedly.
+    required: false
+    default: 'false'
+  fail-only-if-fix-available:
+    description: |
+      If 'true', only findings with a known fix version can fail the build. Narrows every other
+      gate rule. Excluded findings are counted and reported in the log, never silently dropped.
+      Use when you want the gate to reflect what is actionable today.
+    required: false
+    default: 'false'
   output-dir:
     description: 'Directory to write per-manifest SBOMs + depproof-summary.json. Default: GITHUB_WORKSPACE.'
     required: false
@@ -48,6 +67,22 @@ inputs:
     required: false
   report-required:
     description: "If 'true', a failed upload fails the build (engine exit 3). Default: best-effort (warn only)."
+    required: false
+    default: 'false'
+  enrich-online:
+    description: |
+      If 'true', fetch exploitation data (CISA KEV) from your self-hosted hub at scan time and apply
+      it to findings, so it reaches the gate, the HTML report and the SBOM. Requires report-to +
+      report-token. Fail-closed: if the hub is unreachable, no data is applied and `fail-on-kev`
+      cannot fire — the log says so rather than reporting a clean build.
+    required: false
+    default: 'false'
+  fail-on-kev:
+    description: |
+      If 'true', fail the build on findings listed as known-exploited, regardless of severity. Many
+      actively-exploited vulnerabilities are rated only medium, so a severity threshold alone lets
+      them merge. Requires enrich-online. Not narrowed by fail-only-if-fix-available — a
+      known-exploited finding with no fix is the most urgent one in the report.
     required: false
     default: 'false'
   waivers-online:
@@ -80,6 +115,7 @@ runs:
         INPUT_REPORT_TO: ${{ inputs.report-to }}
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
         INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
+        INPUT_ENRICH_ONLINE: ${{ inputs.enrich-online }}
         INPUT_GO_ONLINE: ${{ inputs.go-online }}
       run: |
         set -euo pipefail
@@ -119,7 +155,17 @@ runs:
           ARGS+=("--discover" "--root" "/workspace")
         fi
 
+        # CI gate. Rules are OR-ed by the engine; fail-only-if-fix-available narrows all of them.
         ARGS+=("--fail-on" "${{ inputs.fail-on }}")
+        if [ -n "${{ inputs.fail-on-cvss }}" ]; then
+          ARGS+=("--fail-on-cvss" "${{ inputs.fail-on-cvss }}")
+        fi
+        if [ "${{ inputs.fail-on-unknown }}" = "true" ]; then
+          ARGS+=("--fail-on-unknown")
+        fi
+        if [ "${{ inputs.fail-only-if-fix-available }}" = "true" ]; then
+          ARGS+=("--fail-only-if-fix-available")
+        fi
         ARGS+=("--output-dir" "/workspace/$(realpath --relative-to="$GITHUB_WORKSPACE" "$OUTPUT_DIR" 2>/dev/null || echo .)")
 
         EXCLUDE="${{ inputs.exclude }}"
@@ -184,6 +230,44 @@ runs:
             else
               echo "::warning::depproof-action: could not fetch waivers from the hub — gate stays strict (fail-closed)."
             fi
+          fi
+        fi
+
+        # Online-mode enrichment: fetch exploitation data (CISA KEV) from the hub and apply it to
+        # findings. Unlike waivers this ADDS facts, so it flows into the SBOM and report too, not just
+        # the gate. FAIL-CLOSED — if the fetch fails we apply nothing and fail-on-kev cannot fire, so
+        # we warn loudly: a missing snapshot must never read as "nothing is being exploited".
+        #
+        # The request is `bulk` because the ids to enrich only exist AFTER the scan, while args are
+        # built before it. The hub returns the whole catalogue and depproof filters it locally, which
+        # also means the hub never learns which CVEs this repo has.
+        if [ "${INPUT_ENRICH_ONLINE:-false}" = "true" ]; then
+          if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+            echo "::warning::depproof-action: enrich-online needs report-to + report-token — skipping (no exploitation data applied)."
+          else
+            ENRICH_URL="${INPUT_REPORT_TO%/scans}/enrich"
+            if curl -fsS --max-time 30 -X POST \
+                 -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+                 -H "Content-Type: application/json" \
+                 -d "{\"bulk\":true,\"want\":[\"kev\"],\"repo\":\"${GITHUB_REPOSITORY:-}\",\"commit\":\"${GITHUB_SHA:-}\"}" \
+                 "${ENRICH_URL}" \
+                 -o "${GITHUB_WORKSPACE}/.depproof-enrich.json"; then
+              ARGS+=("--enrich" "/workspace/.depproof-enrich.json")
+              echo "depproof-action: applied hub enrichment from ${ENRICH_URL}"
+            else
+              echo "::warning::depproof-action: could not fetch enrichment from the hub — no exploitation data applied (fail-closed)."
+            fi
+          fi
+        fi
+
+        # KEV gating. Only passed when enrichment was actually applied: the engine rejects the flag
+        # without a snapshot, so passing it after a failed fetch would turn a hub outage into a usage
+        # error (exit 2) instead of a scan that simply couldn't check.
+        if [ "${{ inputs.fail-on-kev }}" = "true" ]; then
+          if printf '%s\n' "${ARGS[@]}" | grep -q -- "--enrich"; then
+            ARGS+=("--fail-on-kev")
+          else
+            echo "::warning::depproof-action: fail-on-kev needs enrich-online with a reachable hub — not gating on exploitation this run."
           fi
         fi
 
