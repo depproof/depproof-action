@@ -202,13 +202,16 @@ CVSS scores come from the advisory's CVSS vector, which is also recorded in the 
 
 ### Gating on exploitation (requires a hub)
 
-Severity says how bad a vulnerability *could* be. It doesn't say whether anyone is actually using it —
+Severity says how bad a vulnerability *could* be. It says nothing about whether anyone is using it —
 and plenty of actively-exploited vulnerabilities are rated only medium, so a `critical`-or-`high`
 threshold merges them without comment.
 
-With `enrich-online`, the action fetches known-exploited data from your self-hosted hub before the scan
-and applies it to findings. `fail-on-kev` then fails the build on those findings **regardless of
-severity**:
+`enrich-online` applies exploitation data from your self-hosted hub. Two signals:
+
+- **`fail-on-kev`** — the vulnerability is on CISA's Known Exploited catalogue. Binary, and fails the
+  build **regardless of severity**.
+- **`fail-on-epss`** — modelled probability of exploitation in the next 30 days. Continuous, so a
+  medium at 0.98 outranks a high nobody is attacking.
 
 ```yaml
 - uses: depproof/depproof-action@v1
@@ -216,21 +219,40 @@ severity**:
     report-to: https://hub.example.com/api/v1/scans
     report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
     enrich-online: true
+    enrich-mode: targeted    # required for fail-on-epss
     fail-on-kev: true
-    fail-on: critical      # unchanged — KEV is an additional rule, not a replacement
+    fail-on-epss: '0.9'
+    fail-on: critical        # unchanged — these are additional rules, not replacements
 ```
 
-Findings carry a KEV badge in the HTML report and a `depproof:kev` property in the SBOM.
+Findings carry a KEV badge in the HTML report and `depproof:kev` / `depproof:epss` properties in the
+SBOM.
 
-Three behaviours worth knowing:
+#### Choosing a mode
+
+| | `bulk` (default) | `targeted` |
+|---|---|---|
+| What travels | the hub sends its whole catalogue | your finding ids go to the hub |
+| Does the hub learn your findings? | **no** | yes |
+| Covers | KEV | KEV + EPSS |
+| `fail-on-epss` | not available | ✅ |
+
+They differ in privacy, not quality. `bulk` keeps your vulnerabilities on the runner — the hub is
+never told which CVEs you have — and it is the default for that reason. `targeted` is required for
+EPSS, whose catalogue is roughly 355,000 entries and cannot be shipped on every run; in exchange, the
+hub records precisely what each scan was told, which is what an auditor asks for.
+
+#### Behaviours worth knowing
 
 - **`fail-only-if-fix-available` does not narrow `fail-on-kev`.** A known-exploited finding with no
   released fix is the most urgent thing in the report, not the one to suppress.
-- **Fail-closed.** If the hub is unreachable, nothing is applied, `fail-on-kev` does not gate, and the
-  log warns twice. The build falls back to your severity rules rather than reporting a clean result on
-  data it never received.
-- **Your findings stay local.** The hub returns the catalogue and the scan matches against it on the
-  runner, so the hub is never told which vulnerabilities your repo has.
+- **Fail-closed, but only when it changes the answer.** If the hub is unreachable and a rule depends
+  on it, the run stops with **exit 4** — a distinct code, so an infrastructure problem is never
+  mistaken for a findings failure. If no such rule is active, the missing data cannot alter the
+  verdict, so the log warns and the scan continues.
+- **`fail-on-epss` with `enrich-mode: bulk` is refused, with a warning.** The bulk catalogue carries
+  KEV only, so the rule would silently match nothing — quietly passing instead of quietly failing,
+  which is the worse of the two.
 
 ## Exit codes
 

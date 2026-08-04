@@ -71,12 +71,32 @@ inputs:
     default: 'false'
   enrich-online:
     description: |
-      If 'true', fetch exploitation data (CISA KEV) from your self-hosted hub at scan time and apply
-      it to findings, so it reaches the gate, the HTML report and the SBOM. Requires report-to +
-      report-token. Fail-closed: if the hub is unreachable, no data is applied and `fail-on-kev`
-      cannot fire — the log says so rather than reporting a clean build.
+      If 'true', apply exploitation data from your self-hosted hub at scan time, so it reaches the
+      gate, the HTML report and the SBOM. Requires report-to + report-token. See `enrich-mode` for
+      how it is fetched. Fail-closed: if the hub is unreachable and a gate rule depends on it, the
+      build stops rather than reporting a clean result on data it never received.
     required: false
     default: 'false'
+  enrich-mode:
+    description: |
+      How enrichment is fetched. Both are supported and differ in privacy, not quality.
+
+      'bulk' (default) — the hub sends the whole known-exploited catalogue and the scan matches it
+      locally, so the hub is never told which vulnerabilities your repo has. Covers KEV only: the
+      EPSS catalogue is ~355,000 entries, far too large to ship on every run.
+
+      'targeted' — the scan sends its finding ids and gets back only those. Required for
+      `fail-on-epss`, and gives you a precise per-scan record on the hub. The trade is that the hub
+      learns which vulnerabilities you have.
+    required: false
+    default: 'bulk'
+  fail-on-epss:
+    description: |
+      Also fail on findings whose modelled exploitation probability is >= this value (0.0-1.0).
+      Severity says how bad a vulnerability could be; this says how likely it is to be exploited —
+      so a medium at 0.98 outranks a high nobody is attacking. Requires enrich-online with
+      enrich-mode 'targeted'. A finding with no score never matches.
+    required: false
   fail-on-kev:
     description: |
       If 'true', fail the build on findings listed as known-exploited, regardless of severity. Many
@@ -116,6 +136,7 @@ runs:
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
         INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
         INPUT_ENRICH_ONLINE: ${{ inputs.enrich-online }}
+        INPUT_ENRICH_MODE: ${{ inputs.enrich-mode }}
         INPUT_GO_ONLINE: ${{ inputs.go-online }}
       run: |
         set -euo pipefail
@@ -233,41 +254,71 @@ runs:
           fi
         fi
 
-        # Online-mode enrichment: fetch exploitation data (CISA KEV) from the hub and apply it to
-        # findings. Unlike waivers this ADDS facts, so it flows into the SBOM and report too, not just
-        # the gate. FAIL-CLOSED — if the fetch fails we apply nothing and fail-on-kev cannot fire, so
-        # we warn loudly: a missing snapshot must never read as "nothing is being exploited".
+        # Online-mode enrichment: apply exploitation data from the hub. Unlike waivers this ADDS facts,
+        # so it flows into the SBOM and report too, not just the gate.
         #
-        # The request is `bulk` because the ids to enrich only exist AFTER the scan, while args are
-        # built before it. The hub returns the whole catalogue and depproof filters it locally, which
-        # also means the hub never learns which CVEs this repo has.
+        # Two modes, differing in privacy rather than quality:
+        #
+        #   bulk     — fetch the whole catalogue here, before the scan, and let depproof match it
+        #              locally. The hub never learns which CVEs this repo has. KEV only: the EPSS
+        #              catalogue is ~355,000 entries and cannot be shipped per run.
+        #   targeted — hand the URL to depproof, which asks the hub mid-scan once the finding ids
+        #              exist. Required for EPSS. The hub learns the findings, and in exchange records
+        #              precisely what this scan was told.
+        #
+        # Bulk is fetched here because the ids do not exist until after the scan, while args are built
+        # before it — that ordering is the whole reason the two modes exist.
         if [ "${INPUT_ENRICH_ONLINE:-false}" = "true" ]; then
           if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
             echo "::warning::depproof-action: enrich-online needs report-to + report-token — skipping (no exploitation data applied)."
           else
             ENRICH_URL="${INPUT_REPORT_TO%/scans}/enrich"
-            if curl -fsS --max-time 30 -X POST \
-                 -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
-                 -H "Content-Type: application/json" \
-                 -d "{\"bulk\":true,\"want\":[\"kev\"],\"repo\":\"${GITHUB_REPOSITORY:-}\",\"commit\":\"${GITHUB_SHA:-}\"}" \
-                 "${ENRICH_URL}" \
-                 -o "${GITHUB_WORKSPACE}/.depproof-enrich.json"; then
-              ARGS+=("--enrich" "/workspace/.depproof-enrich.json")
-              echo "depproof-action: applied hub enrichment from ${ENRICH_URL}"
+            if [ "${INPUT_ENRICH_MODE:-bulk}" = "targeted" ]; then
+              # depproof does the request itself, and fails closed (exit 4) if the hub is unreachable
+              # AND a rule depends on it. The token reaches the container via -e, never on argv.
+              ARGS+=("--enrich-from" "${ENRICH_URL}")
+              ENRICH_APPLIED=1
+              echo "depproof-action: enrichment will be fetched during the scan from ${ENRICH_URL} (targeted)"
             else
-              echo "::warning::depproof-action: could not fetch enrichment from the hub — no exploitation data applied (fail-closed)."
+              # FAIL-CLOSED: on a failed fetch we apply nothing and warn loudly. A missing snapshot
+              # must never read as "nothing is being exploited".
+              if curl -fsS --max-time 30 -X POST \
+                   -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+                   -H "Content-Type: application/json" \
+                   -d "{\"bulk\":true,\"want\":[\"kev\"],\"repo\":\"${GITHUB_REPOSITORY:-}\",\"commit\":\"${GITHUB_SHA:-}\"}" \
+                   "${ENRICH_URL}" \
+                   -o "${GITHUB_WORKSPACE}/.depproof-enrich.json"; then
+                ARGS+=("--enrich" "/workspace/.depproof-enrich.json")
+                ENRICH_APPLIED=1
+                echo "depproof-action: applied hub enrichment from ${ENRICH_URL} (bulk)"
+              else
+                echo "::warning::depproof-action: could not fetch enrichment from the hub — no exploitation data applied (fail-closed)."
+              fi
             fi
           fi
         fi
 
-        # KEV gating. Only passed when enrichment was actually applied: the engine rejects the flag
-        # without a snapshot, so passing it after a failed fetch would turn a hub outage into a usage
-        # error (exit 2) instead of a scan that simply couldn't check.
+        # Exploitation gating. Only passed when enrichment was actually arranged: the engine rejects
+        # these flags without a source, so passing them after a failed fetch would turn a hub outage
+        # into a usage error (exit 2) instead of a scan that simply could not check.
         if [ "${{ inputs.fail-on-kev }}" = "true" ]; then
-          if printf '%s\n' "${ARGS[@]}" | grep -q -- "--enrich"; then
+          if [ "${ENRICH_APPLIED:-0}" = "1" ]; then
             ARGS+=("--fail-on-kev")
           else
             echo "::warning::depproof-action: fail-on-kev needs enrich-online with a reachable hub — not gating on exploitation this run."
+          fi
+        fi
+
+        # EPSS needs targeted mode specifically: the bulk catalogue carries KEV only, so a bulk run
+        # would pass the flag against data that can never contain a score, and every finding would
+        # silently fail to match.
+        if [ -n "${{ inputs.fail-on-epss }}" ]; then
+          if [ "${ENRICH_APPLIED:-0}" != "1" ]; then
+            echo "::warning::depproof-action: fail-on-epss needs enrich-online with a reachable hub — not gating on EPSS this run."
+          elif [ "${INPUT_ENRICH_MODE:-bulk}" != "targeted" ]; then
+            echo "::warning::depproof-action: fail-on-epss requires enrich-mode 'targeted' (bulk carries KEV only) — not gating on EPSS this run."
+          else
+            ARGS+=("--fail-on-epss" "${{ inputs.fail-on-epss }}")
           fi
         fi
 
