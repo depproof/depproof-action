@@ -258,7 +258,14 @@ hub records precisely what each scan was told, which is what an auditor asks for
 
 - `0` — scan clean (no finding tripped the gate)
 - `1` — one or more findings tripped the gate
-- `2` — scan error (bad arguments or unsupported file)
+- `2` — scan error (bad arguments, or a manifest that could not be parsed)
+- `3` — `report-required` was set and the report was not delivered to the hub
+- `4` — a gate rule depends on enrichment the hub could not supply
+
+The codes above `1` are deliberately distinct so a failed build can be told apart from a broken one.
+`3` and `4` mean the scan never reached a trustworthy verdict — an infrastructure problem, not a
+finding — and a workflow that treats "non-zero" as "vulnerable" will misreport both. `3` is only
+raised when the scan itself passed, so an upload problem can never mask a real failure.
 
 ## Examples
 
