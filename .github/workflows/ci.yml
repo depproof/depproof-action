@@ -8,6 +8,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # These steps take about two seconds. Run #1 hung for 15 minutes and died with a GitHub
+    # "Internal server error", burning the minutes and reporting a failure that had nothing to do
+    # with the code. A cap turns that class of event into a fast, obvious infrastructure failure
+    # instead of a slow ambiguous one.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +24,9 @@ jobs:
       # a mis-indented heredoc breaks the YAML, and a typo breaks the shell. Cheap to check here.
       - name: action.yml parses, and its shell is syntactically valid
         run: |
+          # PyYAML ships in the ubuntu-latest image, but this check exists to catch a broken
+          # action.yml — it should not itself break silently if a future image drops the module.
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
           python3 - <<'PY'
           import re, yaml
           spec = yaml.safe_load(open("action.yml"))
