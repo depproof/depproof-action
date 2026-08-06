@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Renderer tests
+        run: python3 test_render_summary.py
+
+      # The action is a composite whose body is one large bash script inside a YAML block scalar.
+      # Both halves can break independently and neither shows up until a consumer's build fails:
+      # a mis-indented heredoc breaks the YAML, and a typo breaks the shell. Cheap to check here.
+      - name: action.yml parses, and its shell is syntactically valid
+        run: |
+          python3 - <<'PY'
+          import re, yaml
+          spec = yaml.safe_load(open("action.yml"))
+          script = spec["runs"]["steps"][0]["run"]
+          # GitHub expressions are not shell; stub them before handing the body to bash -n.
+          open("/tmp/step.sh", "w").write(re.sub(r"\$\{\{[^}]*\}\}", "STUB", script))
+          print(f"action.yml OK — {len(spec['inputs'])} inputs")
+          PY
+          bash -n /tmp/step.sh

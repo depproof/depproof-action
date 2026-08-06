@@ -120,6 +120,27 @@ inputs:
       `go.mod` parse if `go` is missing or the command fails. Default: true.
     required: false
     default: 'true'
+  job-summary:
+    description: |
+      Render the findings to the workflow run page ($GITHUB_STEP_SUMMARY). Without this the scan's
+      output lives only in files in the workspace, which are discarded when the runner is torn down
+      unless the caller uploads them — so a failing build shows a red check and nothing else.
+      Needs no permissions and works on every repository, public or private. Default: true.
+    required: false
+    default: 'true'
+  pr-comment:
+    description: |
+      Post the same summary as a single comment on the pull request, updated in place on each run
+      rather than appended (so a busy PR gets one comment, not twenty). 'auto' posts only on
+      pull_request events, 'false' disables it. Requires `pull-requests: write`; without that
+      permission the step warns and the build is unaffected — a comment is never worth failing a
+      build over.
+    required: false
+    default: 'auto'
+  github-token:
+    description: 'Token used to post the PR comment. Defaults to the workflow token.'
+    required: false
+    default: ${{ github.token }}
 
 # Composite action: shell-builds the depproof args based on inputs, then invokes the Docker image
 # via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
@@ -138,6 +159,8 @@ runs:
         INPUT_ENRICH_ONLINE: ${{ inputs.enrich-online }}
         INPUT_ENRICH_MODE: ${{ inputs.enrich-mode }}
         INPUT_GO_ONLINE: ${{ inputs.go-online }}
+        # Consumed by `gh` for the PR comment only. Scoped to this step like every other credential.
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
 
@@ -325,9 +348,58 @@ runs:
         # Pull + run. The image is a multi-arch manifest at ghcr.io/depproof/depproof:v0.
         # `--rm` removes the container after exit. We mount the workspace read-write so SBOMs can
         # be written back; depproof doesn't modify the source itself.
+        # The exit code is captured rather than allowed to propagate, because the surfaces below
+        # matter MOST when the scan fails — letting `set -e` abort here would mean a failing build
+        # renders nothing, which is the exact situation this exists to fix. Re-raised verbatim at
+        # the end, so exit codes 1/2/3/4 keep their distinct meanings.
+        set +e
         docker run --rm \
           "${DOCKER_ENV[@]}" \
           -v "${GITHUB_WORKSPACE}":/workspace \
           -w /workspace \
           ghcr.io/depproof/depproof:v0 \
           "${ARGS[@]}"
+        DEPPROOF_EXIT=$?
+        set -e
+
+        # ---------------------------------------------------------------------------------------
+        # Visibility. Everything below is best-effort: a rendering or API problem must never change
+        # the verdict of a scan that already ran.
+        # ---------------------------------------------------------------------------------------
+        RENDER="${{ github.action_path }}/render_summary.py"
+        SUMMARY_JSON="${OUTPUT_DIR}/depproof-summary.json"
+
+        if [ "${{ inputs.job-summary }}" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+          python3 "$RENDER" --summary-file "$SUMMARY_JSON" --out-dir "$OUTPUT_DIR" \
+            --exit-code "$DEPPROOF_EXIT" --mode summary >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::depproof-action: could not render the job summary"
+        fi
+
+        # PR number comes from the event payload; empty for every non-PR trigger, which is what
+        # keeps 'auto' from trying to comment on a push or a schedule.
+        PR_NUM="$(python3 -c 'import json,os; p=os.environ.get("GITHUB_EVENT_PATH",""); d=json.load(open(p)) if p and os.path.exists(p) else {}; print((d.get("pull_request") or {}).get("number") or "")' 2>/dev/null || true)"
+
+        if [ "${{ inputs.pr-comment }}" != "false" ] && [ -n "$PR_NUM" ]; then
+          BODY="$(mktemp)"
+          if python3 "$RENDER" --summary-file "$SUMMARY_JSON" --out-dir "$OUTPUT_DIR" \
+               --exit-code "$DEPPROOF_EXIT" --mode comment \
+               --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > "$BODY"; then
+            # One comment per PR, updated in place. Without the marker lookup every push would add
+            # another copy, and the action would become the thing everyone mutes.
+            EXISTING="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" --paginate \
+                          --jq '.[] | select(.body | contains("<!-- depproof-action -->")) | .id' \
+                          2>/dev/null | head -1 || true)"
+            if [ -n "$EXISTING" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING}" \
+                -F body=@"$BODY" >/dev/null 2>&1 \
+                || echo "::warning::depproof-action: could not update the PR comment — grant 'pull-requests: write' to enable it."
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" \
+                -F body=@"$BODY" >/dev/null 2>&1 \
+                || echo "::warning::depproof-action: could not post the PR comment — grant 'pull-requests: write' to enable it."
+            fi
+          fi
+          rm -f "$BODY"
+        fi
+
+        exit $DEPPROOF_EXIT

@@ -84,6 +84,13 @@ All inputs are optional. The defaults handle most repos.
     # (falls back to a static go.mod parse otherwise). Default: true.
     go-online: true
 
+    # --- Where the findings show up ---
+    # Render the results onto the workflow run page. No permissions needed, works everywhere.
+    job-summary: true
+    # Post the same summary as one PR comment, updated in place. 'auto' = only on pull_request
+    # events. Needs `pull-requests: write`; without it, warns and the build is unaffected.
+    pr-comment: auto
+
     # --- Self-hosted hub (optional) ---
     # POST each scan report to your depproof-hub for org-wide governance.
     report-to: https://hub.example.com/api/v1/scans
@@ -112,6 +119,33 @@ Use `exclude` to add custom glob patterns on top of the defaults.
 
 ## Output
 
+### In the run itself
+
+By default the action renders the findings straight onto the **workflow run page** — verdict, the
+rule that fired, severity counts, and the findings ranked with known-exploited first. It needs no
+permissions and works on every repository, public or private.
+
+On a pull request it also posts the same summary as a **single comment, updated in place** on each
+run rather than appended. That one needs `pull-requests: write`:
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write     # only needed for the PR comment
+```
+
+Without that permission the comment is skipped with a warning and **the build is unaffected** — a
+comment is never worth failing a build over. Set `pr-comment: false` to turn it off, or
+`job-summary: false` for the run-page summary.
+
+Both surfaces render even when the scan fails, which is when they matter most.
+
+> **A note on GitHub's Security tab.** depproof does not upload SARIF yet, so findings do not appear
+> there. When it does, that surface will require GitHub Advanced Security on private repositories —
+> the two above deliberately do not.
+
+### Files
+
 After a successful run, depproof writes to the workspace (or `output-dir` if set):
 
 | File | Contents |
@@ -121,7 +155,8 @@ After a successful run, depproof writes to the workspace (or `output-dir` if set
 | `depproof-report.html` | Human-readable report (vulnerabilities + dependencies + license policy). Self-contained — opens offline, no network or JS. On multi-manifest scans this is an index linking one `depproof-report-<path>.html` per manifest. Set `html: false` to skip. |
 
 > ⚠️ **These files land in the runner's workspace, which GitHub discards when the job ends.** The
-> action does **not** upload them for you. To make the reports **downloadable from the run**, add an
+> action does **not** upload them for you. The run-page summary above covers the common case; to make
+> the full HTML report and SBOMs **downloadable from the run**, add an
 > [`actions/upload-artifact`](https://github.com/actions/upload-artifact) step (as in
 > [Quick start](#quick-start)):
 >
