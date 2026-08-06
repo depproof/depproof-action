@@ -366,7 +366,7 @@ runs:
         # Visibility. Everything below is best-effort: a rendering or API problem must never change
         # the verdict of a scan that already ran.
         # ---------------------------------------------------------------------------------------
-        RENDER="${{ github.action_path }}/render_summary.py"
+        RENDER="${{ github.action_path }}/scripts/render_summary.py"
         SUMMARY_JSON="${OUTPUT_DIR}/depproof-summary.json"
 
         if [ "${{ inputs.job-summary }}" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

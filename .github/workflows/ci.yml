@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Renderer tests
-        run: python3 test_render_summary.py
+        run: python3 -m unittest discover -s tests -v
 
       # The action is a composite whose body is one large bash script inside a YAML block scalar.
       # Both halves can break independently and neither shows up until a consumer's build fails:
