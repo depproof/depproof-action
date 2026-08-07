@@ -156,6 +156,7 @@ After a successful run, depproof writes to the workspace (or `output-dir` if set
 | File | Contents |
 |---|---|
 | `depproof-summary.json` | Combined results: per-manifest counts, vuln/license totals, fail/pass per manifest |
+| `depproof-summary.md` | The run-page/PR summary, written by the scanner. Present whenever `job-summary` or `pr-comment` is on. |
 | `depproof-sbom-<path>.json` | CycloneDX 1.6 SBOM for each scanned manifest. Slashes in path replaced with `--`. |
 | `depproof-report.html` | Human-readable report (vulnerabilities + dependencies + license policy). Self-contained — opens offline, no network or JS. On multi-manifest scans this is an index linking one `depproof-report-<path>.html` per manifest. Set `html: false` to skip. |
 
