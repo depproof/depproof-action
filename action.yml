@@ -222,6 +222,13 @@ runs:
           ARGS+=("--html")
         fi
 
+        # Ask the engine for the markdown summary when either surface will show it. The engine
+        # renders it, not this Action: it is the component that knows the gate decision with waivers
+        # applied, and the result is a file any CI can display (ADR-0006, amended).
+        if [ "${{ inputs.job-summary }}" = "true" ] || [ "${{ inputs.pr-comment }}" != "false" ]; then
+          ARGS+=("--markdown")
+        fi
+
         # Optional push to a self-hosted depproof-hub. Metadata comes from the GitHub context
         # (engine stays headless); the token is forwarded via a valueless -e, never on argv.
         DOCKER_ENV=()
@@ -366,13 +373,16 @@ runs:
         # Visibility. Everything below is best-effort: a rendering or API problem must never change
         # the verdict of a scan that already ran.
         # ---------------------------------------------------------------------------------------
-        RENDER="${{ github.action_path }}/scripts/render_summary.py"
-        SUMMARY_JSON="${OUTPUT_DIR}/depproof-summary.json"
+        # The engine rendered the summary; this Action only decides where to put it. Everything the
+        # display used to reason about — which verdict is authoritative, how findings rank, whether
+        # absent data reads as clean — now lives in the engine, where the gate decision actually is,
+        # and reaches every CI rather than this one (ADR-0006, amended).
+        BODY_SH="${{ github.action_path }}/scripts/summary_body.sh"
+        SUMMARY_MD="${OUTPUT_DIR}/depproof-summary.md"
 
         if [ "${{ inputs.job-summary }}" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-          python3 "$RENDER" --summary-file "$SUMMARY_JSON" --out-dir "$OUTPUT_DIR" \
-            --exit-code "$DEPPROOF_EXIT" --mode summary >> "$GITHUB_STEP_SUMMARY" \
-            || echo "::warning::depproof-action: could not render the job summary"
+          bash "$BODY_SH" "$SUMMARY_MD" "$DEPPROOF_EXIT" >> "$GITHUB_STEP_SUMMARY" \
+            || echo "::warning::depproof-action: could not write the job summary"
         fi
 
         # PR number comes from the event payload; empty for every non-PR trigger, which is what
@@ -381,9 +391,8 @@ runs:
 
         if [ "${{ inputs.pr-comment }}" != "false" ] && [ -n "$PR_NUM" ]; then
           BODY="$(mktemp)"
-          if python3 "$RENDER" --summary-file "$SUMMARY_JSON" --out-dir "$OUTPUT_DIR" \
-               --exit-code "$DEPPROOF_EXIT" --mode comment \
-               --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > "$BODY"; then
+          if bash "$BODY_SH" "$SUMMARY_MD" "$DEPPROOF_EXIT" '<!-- depproof-action -->' \
+               "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > "$BODY"; then
             # One comment per PR, updated in place. Without the marker lookup every push would add
             # another copy, and the action would become the thing everyone mutes.
             EXISTING="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/comments" --paginate \

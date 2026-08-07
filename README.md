@@ -121,7 +121,7 @@ Use `exclude` to add custom glob patterns on top of the defaults.
 
 ### In the run itself
 
-By default the action renders the findings straight onto the **workflow run page** — verdict, the
+By default the scan's summary is written straight onto the **workflow run page** — verdict, the
 rule that fired, severity counts, and the findings ranked with known-exploited first. It needs no
 permissions and works on every repository, public or private.
 
@@ -140,6 +140,11 @@ comment is never worth failing a build over. Set `pr-comment: false` to turn it 
 
 Both surfaces render even when the scan fails, which is when they matter most.
 
+> **The summary is produced by the scanner, not this action.** depproof writes
+> `depproof-summary.md` itself, so the same output is available in any CI — see the
+> [engine README](https://github.com/depproof/depproof) for a GitLab example. This action only puts
+> it where GitHub can show it.
+>
 > **A note on GitHub's Security tab.** depproof does not upload SARIF yet, so findings do not appear
 > there. When it does, that surface will require GitHub Advanced Security on private repositories —
 > the two above deliberately do not.

@@ -1,62 +1,53 @@
 # Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+bash tests/test_summary_body.sh
 ```
 
-No dependencies, no network, no Docker — they run in milliseconds against fixtures that mirror real
-engine output.
+No dependencies, no network, no Docker.
 
-## What is under test
+## What is — and is not — tested here
 
-Only `scripts/render_summary.py`, which turns a completed scan into the markdown a developer reads on
-the workflow run page and in a pull request comment.
+Only `scripts/summary_body.sh`, which decides what a CI surface displays when the engine did not
+produce a summary.
 
-The scan itself is not tested here. It belongs to the engine, which has its own suite and its own
-repository — by the time this code runs, the scan has finished and produced a correct answer. **The
-single job of everything in `scripts/` is to display that answer without changing it, contradicting
-it, or making its absence look like success.** Every test below defends one of those three.
+Everything else about the summary — the verdict, how findings rank, how EPSS is formatted, whether
+absent data reads as clean — is **rendered by the engine** and tested there, in `MarkdownReportTest`.
+It moved (ADR-0006, amended) because none of it was ever a GitHub concern: those are statements about
+how a finished scan must be presented, and they now hold for every CI rather than for this wrapper
+alone. The engine is also the only component that knows the gate decision with waivers applied, which
+is what makes the verdict trustworthy in the first place.
 
-## Why a display layer needs tests at all
+So this Action no longer renders anything. It runs the scan, then puts the engine's
+`depproof-summary.md` where GitHub can show it — the workflow run page, and a pull request comment
+that updates in place.
 
-Because the failure mode is not a crash.
+## Why the leftover deserves tests at all
 
-A crash is loud and gets fixed. A summary that renders `0%` for a real exploitation score, or a green
-headline over a scan that never ran, is quiet — and it is read at exactly the moment someone is
-deciding whether to merge. Wrong output here is more dangerous than no output, because a reassuring
-green block is the thing people stop checking.
+Because of one case the engine cannot cover: **it produced no summary.**
 
-This repository also has no build step and nothing that runs it before a consumer does. A break does
-not fail here; it fails in someone else's pipeline, at `@v1`, for everyone at once.
+The engine writes `depproof-summary.md` once a scan completes, so an absent or empty file means the
+scan never got that far — bad arguments, an unreadable manifest, a crash. That is exactly when a
+wrapper is most tempted to do nothing, and doing nothing leaves a blank run page. A blank run page
+reads as *"nothing to report"*, when what actually happened is *"nothing was checked"*.
 
-## How the tests are grouped
+That is the same defect class the engine and hub were hardened against — the scanner once recording
+`kev=false` when it meant "not checked", the hub coercing a null EPSS score to zero. Absence must
+never present as safety. The tests here pin the wrapper end of it:
 
-Each class is a property being protected, not a function being covered.
+- an absent **or empty** summary produces an explicit "no summary produced" note, never silence
+- that note says it is **not a clean result**, and never reads as a pass
+- it reports the exit code, so the run page can be matched to the step log
+- it still reaches the PR comment, since a reviewer is who most needs to know
+- the script exits `0` regardless — a display problem must never change the build's verdict
 
-| Class | Protects |
-|---|---|
-| `VerdictSelection` | The headline matches the build's real outcome |
-| `AbsenceIsNotSafety` | Not-checked, not-scanned and no-data never render as clean |
-| `FindingOrder` | The most urgent finding is the one people read first |
-| `CommentIdentity` | The PR comment updates in place instead of accumulating |
-| `Formatting` | Numbers are legible and do not mislead at the extremes |
+The remaining tests cover comment identity: the marker must be the **first** line, or the Action
+cannot find its own previous comment and every push appends another copy until people mute it.
 
-### The two that carry the most weight
+## The rest of the Action
 
-**`VerdictSelection`.** The engine emits two signals that legitimately disagree. The exit code is the
-gate *with* waivers applied — the build's real outcome. `summary.json`'s `fail` is the gate *without*
-them, kept raw so a hub ingesting it sees unsuppressed truth. A centrally-waived finding therefore
-leaves `fail: true` on disk while the build exits `0`. Render the file's flag and you print
-**❌ Failed** directly beside a green check. The renderer takes its verdict from the exit code, always,
-and says so explicitly when the two differ.
-
-**`AbsenceIsNotSafety`.** The recurring defect class across this whole product — the same shape as the
-engine once recording `kev=false` for Log4Shell when it meant *"not checked"*, and the hub coercing a
-null EPSS score to zero. Three different states get conflated into "fine": no data, unchecked data,
-and genuinely-zero data. They are not the same claim and must not look the same.
-
-## Adding a test
-
-State the property in the method name as a sentence, and put *why it matters* in the body rather than
-restating the assertion. `test_known_exploited_outranks_a_higher_severity_that_is_not` says what would
-break; a comment explains that sorting by severity would invert the argument the product is built on.
+`action.yml` is a bash script inside a YAML block scalar — two languages that can each break
+independently, in a repository with no build step, where a break does not fail here but in a
+consumer's pipeline at `@v1`. CI therefore parses `action.yml` and runs `bash -n` over the embedded
+script. That check earned itself immediately: multi-line Python in a `run:` block broke the YAML
+during development.
