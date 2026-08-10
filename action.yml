@@ -105,6 +105,22 @@ inputs:
       known-exploited finding with no fix is the most urgent one in the report.
     required: false
     default: 'false'
+  require-fidelity:
+    description: |
+      Fail the build when a manifest's dependency graph could not be fully resolved: 'resolved',
+      'partial', or 'off' (default).
+
+      This is the only rule that can fail a build with an EMPTY findings list, which is the point.
+      A bare build.gradle is read statically — versions supplied by a BOM, platform or plugin are
+      not applied, so those dependencies and everything beneath them can be absent from the report
+      with no error to show for it. A short findings list from such a scan is not evidence that
+      nothing is wrong.
+
+      'resolved' requires a lockfile or a real resolver everywhere (see "Getting an exact Gradle
+      graph" in the README). 'partial' still allows named gaps — an artifact on a repository the
+      scanner may not contact — but rejects a graph that was never resolved at all.
+    required: false
+    default: 'off'
   waivers-online:
     description: |
       If 'true', fetch the active waiver set from your self-hosted hub (report-to) at scan time and
@@ -326,6 +342,13 @@ runs:
               fi
             fi
           fi
+        fi
+
+        # Coverage gating. Unlike the exploitation flags below, this needs no hub and no enrichment —
+        # it is a fact about the manifest the scan just read, so it is passed through unconditionally
+        # and the engine rejects an unrecognised value as a usage error rather than ignoring it.
+        if [ -n "${{ inputs.require-fidelity }}" ] && [ "${{ inputs.require-fidelity }}" != "off" ]; then
+          ARGS+=("--require-fidelity=${{ inputs.require-fidelity }}")
         fi
 
         # Exploitation gating. Only passed when enrichment was actually arranged: the engine rejects

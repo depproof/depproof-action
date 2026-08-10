@@ -107,7 +107,7 @@ All inputs are optional. The defaults handle most repos.
 
 Auto-discovery finds these manifests anywhere in your repo:
 - `pom.xml` (Maven)
-- `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle)
+- `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle) — a `gradle.lockfile` or `dependencies.txt` gives the **exact** resolved graph; a bare build script is a best-effort read and dependencies whose versions come from a BOM or plugin may be missing entirely, so [produce one in a prior CI step](#getting-an-exact-gradle-graph)
 - `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
 - `poetry.lock`, `pdm.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` (Python) — resolved from the lockfile; a lockless `pyproject.toml` is a minimum-version fallback, so commit a lockfile (or generate one in a prior CI step) for an exact result
 - `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -m -json all` on the runner for the **exact** resolved module graph (written to `go.deps.json`, preferred over `go.mod`); it falls back to a static `go.mod` parse (direct + `// indirect` requires, `replace` applied) when `go` isn't on the runner
@@ -116,6 +116,47 @@ And **skips** these directories (build output and vendored code — nothing to a
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`
 
 Use `exclude` to add custom glob patterns on top of the defaults.
+
+## Getting an exact Gradle graph
+
+**Why this needs a step from you.** For Go, the action runs `go list -m -json all` itself — that
+command only reads module metadata. A Gradle build script is different: it is arbitrary code, and a
+scanner that executes it would run untrusted code on your runner. depproof therefore never invokes
+Gradle. The resolved graph can only come from your own build, which already has the right JDK,
+Gradle version and credentials for private repositories.
+
+Without it, depproof reads `build.gradle` statically. Versions supplied by a BOM, a platform or a
+plugin are not applied, so those dependencies — and everything beneath them — can be **absent from
+the report entirely**, with no error to show for it. The scan says so: it reports coverage as
+`DECLARED_ONLY` and the hub marks findings from that manifest as measured against an unresolved
+graph.
+
+Add whichever fits your project. Either produces an exact graph; auto-discovery picks the file up
+with no extra configuration.
+
+**A dump, committed nowhere** — one extra step, no change to your build:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: actions/setup-java@v4
+  with: { distribution: temurin, java-version: '21' }
+- run: ./gradlew dependencies > dependencies.txt
+- uses: depproof/depproof-action@v1
+```
+
+**Dependency locking** — a change to your build, and you get reproducible resolution as well:
+
+```bash
+./gradlew dependencies --write-locks   # commit the gradle.lockfile(s) it writes
+```
+
+To make this non-optional, gate on it — the build fails until an exact graph is present:
+
+```yaml
+- uses: depproof/depproof-action@v1
+  with:
+    require-fidelity: resolved
+```
 
 ## Output
 
