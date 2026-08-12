@@ -240,7 +240,7 @@ runs:
 
         # Ask the engine for the markdown summary when either surface will show it. The engine
         # renders it, not this Action: it is the component that knows the gate decision with waivers
-        # applied, and the result is a file any CI can display (ADR-0006, amended).
+        # applied, and the result is a file any CI can display.
         if [ "${{ inputs.job-summary }}" = "true" ] || [ "${{ inputs.pr-comment }}" != "false" ]; then
           ARGS+=("--markdown")
         fi
@@ -399,7 +399,7 @@ runs:
         # The engine rendered the summary; this Action only decides where to put it. Everything the
         # display used to reason about — which verdict is authoritative, how findings rank, whether
         # absent data reads as clean — now lives in the engine, where the gate decision actually is,
-        # and reaches every CI rather than this one (ADR-0006, amended).
+        # and reaches every CI rather than this one.
         BODY_SH="${{ github.action_path }}/scripts/summary_body.sh"
         SUMMARY_MD="${OUTPUT_DIR}/depproof-summary.md"
 

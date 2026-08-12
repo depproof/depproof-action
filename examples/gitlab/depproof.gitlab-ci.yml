@@ -8,7 +8,7 @@
 #
 # WHY A TEMPLATE AND NOT A PORT OF THE ACTION. The scan, the gate, the SBOMs and the summary are all
 # produced by the engine, which knows nothing about any CI. The GitHub Action only puts the engine's
-# `depproof-summary.md` where GitHub can display it (ADR-0006, amended); this file is the same job
+# `depproof-summary.md` where GitHub can display it; this file is the same job
 # for GitLab. Anything that behaves differently between the two is a bug in a wrapper, not a
 # difference in what depproof found.
 #

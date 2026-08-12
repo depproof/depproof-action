@@ -23,13 +23,21 @@ Each file is [`basic.yml`](github/basic.yml) plus one idea, so start there and t
 | [`gitlab/depproof.gitlab-ci.yml`](gitlab/depproof.gitlab-ci.yml) | We are not on GitHub. The same scan, gate and summary, with a merge request comment that updates in place. |
 
 The scan, the gate, the SBOMs and the summary are all produced by the scanner, which knows nothing
-about any CI — a wrapper only decides where the output is displayed (ADR-0006, amended). So the
+about any CI — a wrapper only decides where the output is displayed. So the
 GitLab job is not a port of the Action; it is the same container with the same arguments. Anything
 that behaves differently between the two is a bug in a wrapper, not a difference in what depproof
 found.
 
-For any other CI, the whole job is one `docker run` — see the
-[engine README](https://github.com/depproof/depproof#any-ci--gitlab-jenkins-anything-that-runs-a-container).
+For any other CI — Jenkins, CircleCI, Buildkite — the whole job is one `docker run`:
+
+```bash
+docker run --rm -v "$PWD":/workspace -w /workspace ghcr.io/depproof/depproof:v0 \
+  scan --discover --root /workspace --output-dir /workspace --markdown --fail-on critical
+```
+
+The exit code is the gate (`0` clean, `1` findings, `2` scan error) and `depproof-summary.md` is
+what your pipeline displays. If your CI replaces the image's entrypoint to run its own shell — GitLab
+does — call the scanner directly instead: `java -jar /app/app.jar scan …`.
 
 ## Two defaults worth changing deliberately
 

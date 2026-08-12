@@ -26,7 +26,7 @@ fail a build. Whether something *is* a gap is the engine's judgement, read from
 
 Everything else about the summary — the verdict, how findings rank, how EPSS is formatted, whether
 absent data reads as clean — is **rendered by the engine** and tested there, in `MarkdownReportTest`.
-It moved (ADR-0006, amended) because none of it was ever a GitHub concern: those are statements about
+It moved because none of it was ever a GitHub concern: those are statements about
 how a finished scan must be presented, and they now hold for every CI rather than for this wrapper
 alone. The engine is also the only component that knows the gate decision with waivers applied, which
 is what makes the verdict trustworthy in the first place.

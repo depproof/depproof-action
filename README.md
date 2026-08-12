@@ -48,6 +48,49 @@ That's it. On every PR + push to main, depproof scans your repo and fails the bu
 > with one gate per team, a [self-hosted hub](examples/github/hub.yml), and
 > [GitLab CI](examples/gitlab/depproof.gitlab-ci.yml).
 
+## How this fits together
+
+**You own the workflow. You reference the action.**
+
+```
+your repo
+  .github/workflows/audit.yml        ← yours: triggers, steps, permissions, artifacts
+      └─ uses: depproof/depproof-action@v1
+              └─ pulls ghcr.io/depproof/depproof and runs the scan in it
+```
+
+That `uses:` line is the whole integration. There is nothing to vendor, install, or keep in sync —
+no config file of ours in your repo, no runner dependencies (no local Java, Maven, Gradle or Node
+needed). `@v1` is a rolling major tag that picks up fixes; pin to a full version (`@v1.3.0`) or a
+commit SHA if you would rather approve every change yourself.
+
+The scan writes its results into the workspace — SBOMs, an HTML report, `depproof-summary.md` — and
+sets the exit code. Everything after that is your workflow's business: upload them, publish them,
+ignore them.
+
+### Two kinds of tuning
+
+**Values go on the step.** `fail-on`, `require-fidelity`, `exclude`, `report-to` — see
+[Configuration](#configuration) below. Most tuning is this, and it is one line.
+
+**Shape needs a workflow.** Some of the most useful things are not inputs at all, and cannot be:
+
+| What you want | Why it is not an input |
+|---|---|
+| A daily scan | A `schedule:` trigger belongs to the workflow, not to a step |
+| An exact Gradle graph | Your build must run **before** ours — and an action cannot insert a step above itself |
+| One gate per team in a monorepo | That is a job matrix |
+| The reports kept after the run | A separate upload step, with a retention you choose |
+
+That is what [`examples/`](examples/) is for: each file is a complete workflow you copy and edit,
+rather than a snippet to splice. Take the closest one — they compose fine when you need two.
+
+### On GitLab
+
+There is no action to reference, so the [template](examples/gitlab/depproof.gitlab-ci.yml) *is* the
+job: copy it into your repository and it runs the same container with the same arguments. It is
+self-contained by design — nothing is fetched at pipeline time.
+
 ## Configuration
 
 All inputs are optional. The defaults handle most repos.
