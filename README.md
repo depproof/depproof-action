@@ -217,9 +217,15 @@ comment is never worth failing a build over. Set `pr-comment: false` to turn it 
 Both surfaces render even when the scan fails, which is when they matter most.
 
 > **The summary is produced by the scanner, not this action.** depproof writes
-> `depproof-summary.md` itself, so the same output is available in any CI — see the
-> [engine README](https://github.com/depproof/depproof) for a GitLab example. This action only puts
-> it where GitHub can show it.
+> `depproof-summary.md` itself, so the same output is available in any CI. This action only puts it
+> where GitHub can show it. **On GitLab**, include
+> [`gitlab/depproof.gitlab-ci.yml`](gitlab/depproof.gitlab-ci.yml) — same scan, same gate, same
+> summary, posted as a merge request comment that updates in place:
+>
+> ```yaml
+> include:
+>   - remote: 'https://raw.githubusercontent.com/depproof/depproof-action/v1/gitlab/depproof.gitlab-ci.yml'
+> ```
 >
 > **A note on GitHub's Security tab.** depproof does not upload SARIF yet, so findings do not appear
 > there. When it does, that surface will require GitHub Advanced Security on private repositories —

@@ -1,0 +1,191 @@
+# depproof for GitLab CI — dependency & license audit for Maven, Gradle, npm, Python and Go.
+#
+# Include it:
+#
+#   include:
+#     - remote: 'https://raw.githubusercontent.com/depproof/depproof-action/v1/gitlab/depproof.gitlab-ci.yml'
+#
+# and the `depproof` job runs on merge requests, on the default branch, and on schedules.
+#
+# WHY A TEMPLATE AND NOT A PORT OF THE ACTION. The scan, the gate, the SBOMs and the summary are all
+# produced by the engine, which knows nothing about any CI. The GitHub Action only puts the engine's
+# `depproof-summary.md` where GitHub can display it (ADR-0006, amended); this file is the same job
+# for GitLab. Anything that behaves differently between the two is a bug in a wrapper, not a
+# difference in what depproof found.
+#
+# SELF-CONTAINED ON PURPOSE. `include: remote:` fetches exactly one file, so a template cannot carry
+# sibling scripts — and a job that downloads code at run time and executes it is precisely what this
+# product exists to warn people about. Everything below is in this file, readable before you include
+# it, and pinned by whatever ref you include.
+#
+# TUNING — set these as CI/CD variables, or override them on a job that extends `.depproof`:
+#
+#   DEPPROOF_FAIL_ON            critical (default) | high | medium | low | none
+#   DEPPROOF_REQUIRE_FIDELITY   empty (default, advisory only) | partial | resolved
+#   DEPPROOF_ROOT               discovery root; defaults to the repository
+#   DEPPROOF_EXTRA_ARGS         appended verbatim, for anything not surfaced above
+#   DEPPROOF_REPORT_TO          https:// URL of your self-hosted depproof-hub (optional)
+#   DEPPROOF_REPORT_TOKEN       ingest token for the hub — mask it (optional)
+#   DEPPROOF_GITLAB_TOKEN       token with `api` scope, for the MR comment only (optional)
+
+# ---------------------------------------------------------------------------------------------
+# The scan.
+# ---------------------------------------------------------------------------------------------
+.depproof:
+  image: ghcr.io/depproof/depproof:v0
+  variables:
+    DEPPROOF_FAIL_ON: "critical"
+    DEPPROOF_REQUIRE_FIDELITY: ""
+    DEPPROOF_ROOT: "."
+    DEPPROOF_EXTRA_ARGS: ""
+  script:
+    # The image's ENTRYPOINT *is* the scanner, and GitLab replaces the entrypoint in order to run
+    # this script — so the jar is invoked directly. This is the one line that differs from
+    # `docker run ghcr.io/depproof/depproof:v0 scan ...` anywhere else.
+    - |
+      set -eu
+      set -- scan --discover --root "$DEPPROOF_ROOT" --output-dir . --markdown \
+             --fail-on "$DEPPROOF_FAIL_ON"
+
+      # Coverage gating. Off by default: it can fail a build whose findings list is empty, which is
+      # a deliberate choice nobody should be opted into silently. The advisory prints regardless.
+      if [ -n "${DEPPROOF_REQUIRE_FIDELITY:-}" ] && [ "$DEPPROOF_REQUIRE_FIDELITY" != "off" ]; then
+        set -- "$@" --require-fidelity="$DEPPROOF_REQUIRE_FIDELITY"
+      fi
+
+      # Hub push. Repo/commit/branch/event come from GitLab's own variables, so the engine stays
+      # headless and the hub sees the same shape it gets from GitHub. The token is read from the
+      # environment by the engine and never appears on the command line.
+      if [ -n "${DEPPROOF_REPORT_TO:-}" ]; then
+        set -- "$@" --report-to "$DEPPROOF_REPORT_TO" \
+               --report-repo "$CI_PROJECT_PATH" \
+               --report-commit "$CI_COMMIT_SHA" \
+               --report-branch "${CI_COMMIT_REF_NAME:-}" \
+               --report-event "${CI_PIPELINE_SOURCE:-}"
+        if [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+          echo "depproof: DEPPROOF_REPORT_TO is set but DEPPROOF_REPORT_TOKEN is empty — the upload will be skipped" >&2
+        fi
+      fi
+
+      # shellcheck disable=SC2086
+      java -jar /app/app.jar "$@" $DEPPROOF_EXTRA_ARGS
+  artifacts:
+    # `when: always` because a red gate is exactly when someone wants the report. Without it the
+    # evidence vanishes at the moment it is needed.
+    when: always
+    # Deliberate: a daily schedule writes one of these per repository per day, and unbounded
+    # retention of every SBOM is storage nobody decided to spend.
+    expire_in: 30 days
+    paths:
+      - depproof-summary.md
+      - depproof-summary.json
+      - depproof-sbom*.json
+      - depproof-report*.html
+
+depproof:
+  extends: .depproof
+  stage: test
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
+    # Scheduled runs are the point, not an extra. A merge-request scan only tells you about code
+    # somebody is changing; most new risk arrives with no commit at all, when an advisory is
+    # published against a dependency that shipped months ago. Add a daily pipeline schedule
+    # (CI/CD → Schedules) and every repository reports whether or not anyone touched it.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# ---------------------------------------------------------------------------------------------
+# The merge request comment — one note per MR, updated in place.
+# ---------------------------------------------------------------------------------------------
+# A separate job because the scanner image carries a JRE and nothing else (no curl, no python3), and
+# because a comment must never be able to change the verdict of a scan that already ran: this job
+# only reads an artifact, and exits 0 whatever happens.
+depproof:mr-comment:
+  stage: test
+  image: python:3-alpine
+  needs:
+    - job: depproof
+      artifacts: true
+  rules:
+    # Only on merge requests, and only when there is a token to post with. CI_JOB_TOKEN cannot write
+    # notes, so this needs a project access token with `api` scope in DEPPROOF_GITLAB_TOKEN; without
+    # the second condition every MR would run a job that can do nothing but decline.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $DEPPROOF_GITLAB_TOKEN
+  variables:
+    GIT_STRATEGY: none   # the artifact is all this job needs; do not clone the repository again
+  script:
+    - |
+      python3 - depproof-summary.md <<'PY'
+      # Post the scan summary as a single merge request note, updated in place on each run.
+      #
+      # The marker is what makes it one comment instead of one per push. Without finding its own
+      # previous note, every pipeline appends another copy and the integration becomes the thing
+      # everybody mutes — the same rule the GitHub side follows, for the same reason.
+      #
+      # Best-effort throughout: a missing token, an unreachable API, a bad response — say so on
+      # stderr and exit 0. The gate already decided the build; a comment is never worth failing over.
+      import json, os, sys, urllib.error, urllib.request
+
+      MARKER = "<!-- depproof -->"
+      api    = os.environ.get("CI_API_V4_URL", "").rstrip("/")
+      proj   = os.environ.get("CI_PROJECT_ID", "")
+      mr     = os.environ.get("CI_MERGE_REQUEST_IID", "")
+      token  = os.environ.get("DEPPROOF_GITLAB_TOKEN", "")
+      if not (api and proj and mr and token):
+          print("depproof: no MR context or token — skipping the comment", file=sys.stderr)
+          raise SystemExit(0)
+
+      # An absent or empty summary means the scan did not finish: bad arguments, an unreadable
+      # manifest, a crash. Saying nothing would leave the MR looking like nothing was found, which
+      # is the opposite of what happened — so the absence is reported as what it is.
+      try:
+          with open(sys.argv[1]) as fh:
+              body = fh.read().strip()
+      except OSError:
+          body = ""
+      if not body:
+          body = ("## depproof — ⚠️ No summary produced\n\n"
+                  "depproof did not write a summary, so the scan did not complete. "
+                  "This is not a clean result — check the job log.")
+
+      pipeline = os.environ.get("CI_PIPELINE_URL", "")
+      note = f"{MARKER}\n{body}"
+      if pipeline:
+          note += f"\n\n<sub><a href=\"{pipeline}\">pipeline</a></sub>"
+
+      def call(url, data=None, method="GET"):
+          req = urllib.request.Request(
+              url, method=method,
+              data=json.dumps(data).encode() if data is not None else None,
+              headers={"PRIVATE-TOKEN": token, "Content-Type": "application/json"},
+          )
+          with urllib.request.urlopen(req, timeout=20) as r:
+              return json.loads(r.read().decode() or "null"), r.headers
+
+      base = f"{api}/projects/{proj}/merge_requests/{mr}/notes"
+      try:
+          existing, page, seen = None, "1", 0
+          # Paginated deliberately: an MR with a long discussion pushes our note off the first page,
+          # and stopping there would post a duplicate on every busy review. Bounded just as
+          # deliberately — the loop's exit condition is a header the server controls, and a CI job
+          # that spins until the runner's timeout is a worse outcome than a missing comment.
+          while page and existing is None and seen < 20:
+              notes, headers = call(f"{base}?per_page=100&page={page}")
+              seen += 1
+              for n in notes or []:
+                  if MARKER in (n.get("body") or ""):
+                      existing = n["id"]
+                      break
+              nxt = headers.get("X-Next-Page") or ""
+              page = nxt if nxt != page else ""   # a server repeating itself is a server with no next page
+
+          if existing:
+              call(f"{base}/{existing}", {"body": note}, method="PUT")
+              print(f"depproof: updated MR note {existing}")
+          else:
+              call(base, {"body": note}, method="POST")
+              print("depproof: posted MR note")
+      except (urllib.error.URLError, OSError, ValueError) as e:
+          print(f"depproof: could not post the MR comment ({e}) — the build is unaffected", file=sys.stderr)
+      PY
+  allow_failure: true

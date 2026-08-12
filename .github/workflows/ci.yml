@@ -22,6 +22,22 @@ jobs:
       - name: Coverage-annotation tests
         run: bash tests/test_coverage_annotation.sh
 
+      # The GitLab template carries its MR-comment script inline (a remote include fetches one file,
+      # and a CI job that downloads code to execute is what this product warns about), so the test
+      # extracts the heredoc and runs it against a stub API. It also checks the YAML parses and the
+      # scan job's shell is valid — the same two-languages-in-one-file risk as action.yml.
+      - name: GitLab template tests
+        run: |
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 - <<'PY'
+          import yaml
+          spec = yaml.safe_load(open("gitlab/depproof.gitlab-ci.yml"))
+          open("/tmp/gl_scan.sh", "w").write(spec[".depproof"]["script"][0])
+          print(f"template OK — {len([k for k in spec if not k.startswith('.')])} jobs")
+          PY
+          sh -n /tmp/gl_scan.sh
+          python3 tests/test_gitlab_mr_note.py
+
       # The action is a composite whose body is one large bash script inside a YAML block scalar.
       # Both halves can break independently and neither shows up until a consumer's build fails:
       # a mis-indented heredoc breaks the YAML, and a typo breaks the shell. Cheap to check here.
