@@ -403,6 +403,13 @@ runs:
         BODY_SH="${{ github.action_path }}/scripts/summary_body.sh"
         SUMMARY_MD="${OUTPUT_DIR}/depproof-summary.md"
 
+        # Coverage, on the run page rather than only inside a page someone opens. The engine decides
+        # whether there is a gap and what to do about it; this only lifts that decision to the one
+        # surface a green build is actually looked at on. Never fails the step — the gate input
+        # `require-fidelity` remains the only thing that can fail a build over coverage.
+        bash "${{ github.action_path }}/scripts/coverage_annotation.sh" \
+          "${OUTPUT_DIR}/depproof-summary.json" "${{ inputs.require-fidelity }}" || true
+
         if [ "${{ inputs.job-summary }}" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
           bash "$BODY_SH" "$SUMMARY_MD" "$DEPPROOF_EXIT" >> "$GITHUB_STEP_SUMMARY" \
             || echo "::warning::depproof-action: could not write the job summary"

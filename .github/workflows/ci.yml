@@ -19,6 +19,9 @@ jobs:
       - name: Summary-body tests
         run: bash tests/test_summary_body.sh
 
+      - name: Coverage-annotation tests
+        run: bash tests/test_coverage_annotation.sh
+
       # The action is a composite whose body is one large bash script inside a YAML block scalar.
       # Both halves can break independently and neither shows up until a consumer's build fails:
       # a mis-indented heredoc breaks the YAML, and a typo breaks the shell. Cheap to check here.

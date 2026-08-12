@@ -2,14 +2,26 @@
 
 ```bash
 bash tests/test_summary_body.sh
+bash tests/test_coverage_annotation.sh
 ```
 
 No dependencies, no network, no Docker.
 
 ## What is — and is not — tested here
 
-Only `scripts/summary_body.sh`, which decides what a CI surface displays when the engine did not
-produce a summary.
+Two scripts, and both exist for the same reason: a surface the engine cannot reach from inside the
+container.
+
+`scripts/summary_body.sh` decides what a CI surface displays when the engine did not produce a
+summary.
+
+`scripts/coverage_annotation.sh` lifts the engine's coverage caveat onto the **run page** as a
+`::warning::`. The engine already renders that caveat into `depproof-summary.md`; a job summary and
+a PR comment are both pages someone has to open, and a green build gets one glance at the run page.
+What is tested here is only the Action's half — that a real gap becomes an annotation, that a
+manifest the engine already excused (`superseded`) stays silent, and that no display problem can
+fail a build. Whether something *is* a gap is the engine's judgement, read from
+`depproof-summary.json` rather than re-derived, and tested there in `CoverageAdviceTest`.
 
 Everything else about the summary — the verdict, how findings rank, how EPSS is formatted, whether
 absent data reads as clean — is **rendered by the engine** and tested there, in `MarkdownReportTest`.
