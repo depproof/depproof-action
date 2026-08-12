@@ -1,11 +1,10 @@
 # depproof for GitLab CI — dependency & license audit for Maven, Gradle, npm, Python and Go.
 #
-# Include it:
-#
-#   include:
-#     - remote: 'https://raw.githubusercontent.com/depproof/depproof-action/v1/gitlab/depproof.gitlab-ci.yml'
-#
-# and the `depproof` job runs on merge requests, on the default branch, and on schedules.
+# COPY THIS INTO YOUR REPOSITORY. Paste the jobs into your `.gitlab-ci.yml`, or drop this file in and
+# `include: local: '.gitlab/depproof.yml'`. It is an example to own and edit, not a service to fetch:
+# your pipeline should not depend on reaching a URL of ours to know how to build, and a security
+# scanner is the last thing that should teach anyone to pull CI configuration off the internet at
+# pipeline time.
 #
 # WHY A TEMPLATE AND NOT A PORT OF THE ACTION. The scan, the gate, the SBOMs and the summary are all
 # produced by the engine, which knows nothing about any CI. The GitHub Action only puts the engine's
@@ -13,10 +12,8 @@
 # for GitLab. Anything that behaves differently between the two is a bug in a wrapper, not a
 # difference in what depproof found.
 #
-# SELF-CONTAINED ON PURPOSE. `include: remote:` fetches exactly one file, so a template cannot carry
-# sibling scripts — and a job that downloads code at run time and executes it is precisely what this
-# product exists to warn people about. Everything below is in this file, readable before you include
-# it, and pinned by whatever ref you include.
+# SELF-CONTAINED ON PURPOSE. Everything is in this one file, including the merge-request comment —
+# nothing here fetches anything at run time, so what you read is what runs.
 #
 # TUNING — set these as CI/CD variables, or override them on a job that extends `.depproof`:
 #
