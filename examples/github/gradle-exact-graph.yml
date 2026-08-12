@@ -1,0 +1,66 @@
+# Gradle: give depproof the resolved graph, and refuse to build without it.
+#
+# WHY A STEP FROM YOU. A Gradle build script is arbitrary code. A scanner that executed it would run
+# untrusted code on your runner, so depproof never invokes Gradle — which means the resolved graph
+# can only come from your own build, which already has the right JDK, Gradle version and credentials
+# for private repositories.
+#
+# WHAT IT COSTS TO SKIP. Read statically, a build script declares intent, not outcome: versions
+# supplied by a BOM, a platform or a plugin are not applied, so those dependencies AND EVERYTHING
+# BENEATH THEM can be absent from the report entirely. Measured on a real Spring Boot service: 113
+# components from the build script, 585 from the resolved graph. The scan says so — coverage reads
+# DECLARED_ONLY — but a short findings list still reads like good news to anyone skimming.
+
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+
+      # ---- single-module build: one dump at the root is the whole answer ----
+      - run: ./gradlew -q dependencies > dependencies.txt
+
+      # ---- multi-module build: use THIS instead of the line above ----
+      #
+      # `dependencies` is a per-project task. At the root of a multi-module build it reports the root
+      # project and nothing else — and the file it writes is perfectly valid for that one project,
+      # which is why nothing about the result looks wrong. depproof matches a dump to the build
+      # script in the same directory, so each module needs its own, and each module without one keeps
+      # reporting DECLARED_ONLY until it has one.
+      #
+      # - run: |
+      #     ./gradlew -q dependencies > dependencies.txt
+      #     ./gradlew -q projects | sed -n "s/.*Project '\(:[^']*\)'.*/\1/p" | while read -r p; do
+      #       dir="$(echo "${p#:}" | tr ':' '/')"
+      #       ./gradlew -q "$p:dependencies" > "$dir/dependencies.txt"
+      #     done
+
+      - uses: depproof/depproof-action@v1
+        with:
+          # Now that an exact graph is available, refuse to report on anything less. Without this the
+          # scan still warns — loudly, on the run page and in the PR comment — but exits 0, so a
+          # broken pre-step degrades to a quieter scan instead of a red build.
+          require-fidelity: resolved
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: depproof-reports
+          retention-days: 30
+          path: |
+            depproof-*.json
+            depproof-report*.html

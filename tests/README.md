@@ -58,7 +58,7 @@ The remaining tests cover comment identity: the marker must be the **first** lin
 cannot find its own previous comment and every push appends another copy until people mute it.
 
 `tests/test_gitlab_mr_note.py` covers the merge-request comment in
-[`gitlab/depproof.gitlab-ci.yml`](../gitlab/depproof.gitlab-ci.yml). That script is **embedded in the
+[`examples/gitlab/depproof.gitlab-ci.yml`](../examples/gitlab/depproof.gitlab-ci.yml). That script is **embedded in the
 template**, because `include: remote:` fetches exactly one file and a CI job that downloads code at
 run time to execute it is the thing this product exists to warn people about. So the test extracts
 the heredoc from the YAML and runs it against a stub GitLab API — testing a copy would test the copy.

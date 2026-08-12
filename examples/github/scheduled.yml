@@ -1,0 +1,46 @@
+# A daily scan, whether or not anybody touched the repository.
+#
+# WHY THIS IS NOT OPTIONAL, if you care about what is running in production:
+#
+# A pull-request scan only ever tells you about code somebody is changing. Most new risk arrives
+# with no commit at all — an advisory published this morning against a dependency you shipped eight
+# months ago. A repository that nobody has touched since March is not a repository with no risk; it
+# is a repository nothing has looked at since March.
+#
+# It also makes silence mean something. Once every repository is expected to report daily, "this one
+# has not reported in a week" is a signal you can act on: the workflow was deleted, the token
+# expired, someone disabled Actions. No scan will ever tell you that, because the failure IS the
+# absence of the scan.
+#
+# Cost: CI minutes. A scan builds nothing and publishes no image.
+
+name: Dependency Audit (daily)
+
+on:
+  schedule:
+    - cron: '17 6 * * *'     # 06:17 UTC. Off the hour on purpose — everyone picks 0, and GitHub
+                             # delays scheduled runs under load.
+  workflow_dispatch:          # so you can run it by hand without waiting for tomorrow
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: depproof/depproof-action@v1
+        with:
+          # No PR to comment on; the run-page summary is the surface here.
+          pr-comment: false
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: depproof-reports-${{ github.run_id }}
+          retention-days: 14   # daily runs: keep the window short unless you are archiving evidence
+          path: |
+            depproof-*.json
+            depproof-report*.html

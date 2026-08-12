@@ -42,6 +42,8 @@ jobs:
 
 That's it. On every PR + push to main, depproof scans your repo and fails the build if any CRITICAL vulnerability is present.
 
+> 📂 **[`examples/`](examples/)** — working workflows to copy: a [daily scan](examples/github/scheduled.yml) (for code nobody is changing), an [exact Gradle graph](examples/github/gradle-exact-graph.yml), a [monorepo](examples/github/monorepo.yml) with one gate per team, a [self-hosted hub](examples/github/hub.yml), and [GitLab CI](examples/gitlab/depproof.gitlab-ci.yml).
+
 ## Configuration
 
 All inputs are optional. The defaults handle most repos.
@@ -219,7 +221,7 @@ Both surfaces render even when the scan fails, which is when they matter most.
 > **The summary is produced by the scanner, not this action.** depproof writes
 > `depproof-summary.md` itself, so the same output is available in any CI. This action only puts it
 > where GitHub can show it. **On GitLab**, copy
-> [`gitlab/depproof.gitlab-ci.yml`](gitlab/depproof.gitlab-ci.yml) into your repository — same scan,
+> [`examples/gitlab/depproof.gitlab-ci.yml`](examples/gitlab/depproof.gitlab-ci.yml) into your repository — same scan,
 > same gate, same summary, posted as a merge request comment that updates in place. It is a worked
 > example to own and edit, and it fetches nothing at run time.
 >

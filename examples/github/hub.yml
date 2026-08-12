@@ -1,0 +1,65 @@
+# Reporting to a self-hosted depproof-hub: the estate view, central waivers, exploitation data.
+#
+# Everything below is optional and each part is independently useful. The scan works with no hub at
+# all; what a hub adds is the questions one repository cannot answer — which of our 200 services ship
+# this component, which findings are known-exploited, what did we deliberately accept and when does
+# that expire.
+#
+# The hub is yours: self-hosted, in your perimeter. depproof runs no service that sees your data.
+
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: depproof/depproof-action@v1
+        with:
+          # ---- push the result ----
+          report-to: https://hub.internal.example.com/api/v1/scans
+          report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
+          # Best-effort by default: a hub outage warns and the build carries on, because an
+          # unreachable dashboard is not a security finding. Set this if an unrecorded scan is
+          # unacceptable to you — it fails the build (exit 3) only when the scan itself passed.
+          report-required: false
+
+          # ---- apply exploitation data at scan time ----
+          # So KEV/EPSS reach the gate, the SBOM and the report — not just the dashboard afterwards.
+          # Fail-closed: if the hub is unreachable AND a gate rule depends on this data, the build
+          # stops rather than reporting a clean result on data it never received.
+          enrich-online: true
+          # bulk     — fetch the whole KEV catalogue and match locally; the hub never learns which
+          #            CVEs this repository has.
+          # targeted — ask the hub about this scan's findings; REQUIRED for EPSS, and the hub records
+          #            exactly what it was asked.
+          enrich-mode: targeted
+
+          # ---- gate on exploitation, not just severity ----
+          fail-on-kev: true          # known-exploited, whatever its CVSS says
+          fail-on-epss: '0.5'        # >=50% chance of exploitation in the next 30 days
+
+          # ---- honour waivers decided centrally ----
+          # Fetched from the hub and applied to the EXIT CODE only: the SBOM and the pushed report
+          # stay raw, so a waiver never edits the evidence. Fail-closed — an unreachable hub means
+          # no waivers applied and a stricter gate, never a quietly greener one.
+          waivers-online: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: depproof-reports
+          retention-days: 30
+          path: |
+            depproof-*.json
+            depproof-report*.html

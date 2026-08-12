@@ -1,0 +1,58 @@
+# A monorepo: narrow what is scanned, or name the manifests yourself.
+#
+# Discovery is the default and usually right — it walks the repository, finds every supported
+# manifest, and prunes build output (node_modules/, target/, build/, dist/, vendor/, .gradle/) plus
+# obvious fixture trees. Two reasons to take control:
+#
+#   1. A subtree is somebody else's problem (a vendored SDK, an archived service).
+#   2. You want one workflow per team, each scanning its own directory.
+#
+# Whatever you exclude is RECORDED, not silently dropped: the scan reports which subtrees it skipped
+# and which rule skipped them, so a narrowed scan can never quietly present itself as a full one.
+
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ---- one scan, with parts of the tree excluded ----
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: depproof/depproof-action@v1
+        with:
+          exclude: 'third_party/**,archive/**,**/testdata/**'
+
+  # ---- one scan per service, so each team owns its own gate ----
+  #
+  # `root` keeps discovery inside a directory; `files` names manifests explicitly when you want no
+  # discovery at all. Multiple Maven POMs passed together are auto-bundled, so child modules resolve
+  # their parent locally rather than reporting a phantom gap.
+  scan-per-service:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # one team's red build must not hide another's
+      matrix:
+        service: [checkout, payments, search]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: depproof/depproof-action@v1
+        with:
+          root: services/${{ matrix.service }}
+          output-dir: services/${{ matrix.service }}
+          # Only one job should comment, or three copies land on every PR.
+          pr-comment: false
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: depproof-${{ matrix.service }}
+          retention-days: 30
+          path: services/${{ matrix.service }}/depproof-*

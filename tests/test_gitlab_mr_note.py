@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the merge-request comment embedded in gitlab/depproof.gitlab-ci.yml.
+"""Tests for the merge-request comment embedded in examples/gitlab/depproof.gitlab-ci.yml.
 
 The script under test lives *inside* the template, because `include: remote:` fetches exactly one
 file and a CI job that downloads code at run time to execute it is the thing this product warns
@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE = ROOT / "gitlab" / "depproof.gitlab-ci.yml"
+TEMPLATE = ROOT / "examples" / "gitlab" / "depproof.gitlab-ci.yml"
 
 passed = failed = 0
 

@@ -31,12 +31,31 @@ jobs:
           python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
           python3 - <<'PY'
           import yaml
-          spec = yaml.safe_load(open("gitlab/depproof.gitlab-ci.yml"))
+          spec = yaml.safe_load(open("examples/gitlab/depproof.gitlab-ci.yml"))
           open("/tmp/gl_scan.sh", "w").write(spec[".depproof"]["script"][0])
           print(f"template OK — {len([k for k in spec if not k.startswith('.')])} jobs")
           PY
           sh -n /tmp/gl_scan.sh
           python3 tests/test_gitlab_mr_note.py
+
+      # Examples are copy-paste material: a broken one fails in somebody else's pipeline, where they
+      # have no reason to suspect us. Parsing is the cheap half of that promise.
+      - name: Examples parse
+        run: |
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 - <<'PY'
+          import pathlib, sys, yaml
+          bad = []
+          for p in sorted(pathlib.Path("examples").rglob("*.yml")):
+              try:
+                  yaml.safe_load(p.read_text())
+                  print(f"ok  {p}")
+              except Exception as e:
+                  bad.append(f"{p}: {e}")
+          for b in bad:
+              print(f"BAD {b}")
+          sys.exit(1 if bad else 0)
+          PY
 
       # The action is a composite whose body is one large bash script inside a YAML block scalar.
       # Both halves can break independently and neither shows up until a consumer's build fails:

@@ -1,0 +1,44 @@
+# The whole thing: scan every manifest in the repository, fail the build on a critical.
+#
+# Copy to .github/workflows/depproof.yml. Nothing here needs configuring — discovery finds Maven,
+# Gradle, npm/pnpm/yarn/bun, Python and Go manifests wherever they are, and skips build output and
+# vendored code.
+#
+# Start here. Every other example in this folder is this file plus one idea.
+
+name: Dependency Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write     # only for the PR comment; drop it and the comment is skipped with a warning
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: depproof/depproof-action@v1
+        # Defaults worth knowing, all overridable:
+        #   fail-on: critical      — the gate. `none` reports without ever failing the build.
+        #   job-summary: true      — the verdict and findings on the run page.
+        #   pr-comment: auto       — one comment per PR, updated in place, never appended.
+        #   go-online: true        — runs `go list -m -json all` for an exact Go graph when Go is present.
+
+      # The reports live in the runner's workspace, which GitHub discards when the job ends. This
+      # step is what makes them downloadable from the run — the SBOMs an auditor asks for, and the
+      # HTML report that opens offline.
+      - uses: actions/upload-artifact@v4
+        if: always()             # upload even when the gate went red, which is when they matter
+        with:
+          name: depproof-reports
+          retention-days: 30     # a scan per push adds up; 90 is the account default
+          path: |
+            depproof-*.json
+            depproof-report*.html
+            depproof-summary.md
