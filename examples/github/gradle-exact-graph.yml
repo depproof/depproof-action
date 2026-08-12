@@ -7,9 +7,9 @@
 #
 # WHAT IT COSTS TO SKIP. Read statically, a build script declares intent, not outcome: versions
 # supplied by a BOM, a platform or a plugin are not applied, so those dependencies AND EVERYTHING
-# BENEATH THEM can be absent from the report entirely. Measured on a real Spring Boot service: 113
-# components from the build script, 585 from the resolved graph. The scan says so — coverage reads
-# DECLARED_ONLY — but a short findings list still reads like good news to anyone skimming.
+# BENEATH THEM can be absent from the report entirely. On a Spring Boot service, where the starters
+# carry most of the tree, that is the majority of your dependencies. The scan says so — coverage
+# reads DECLARED_ONLY — but a short findings list still reads like good news to anyone skimming.
 
 name: Dependency Audit
 
