@@ -42,7 +42,11 @@ jobs:
 
 That's it. On every PR + push to main, depproof scans your repo and fails the build if any CRITICAL vulnerability is present.
 
-> 📂 **[`examples/`](examples/)** — working workflows to copy: a [daily scan](examples/github/scheduled.yml) (for code nobody is changing), an [exact Gradle graph](examples/github/gradle-exact-graph.yml), a [monorepo](examples/github/monorepo.yml) with one gate per team, a [self-hosted hub](examples/github/hub.yml), and [GitLab CI](examples/gitlab/depproof.gitlab-ci.yml).
+> 📂 That file is [`examples/github/basic.yml`](examples/github/basic.yml), annotated. **[`examples/`](examples/)**
+> has the rest — a [daily scan](examples/github/scheduled.yml) for code nobody is changing, an
+> [exact Gradle graph](examples/github/gradle-exact-graph.yml), a [monorepo](examples/github/monorepo.yml)
+> with one gate per team, a [self-hosted hub](examples/github/hub.yml), and
+> [GitLab CI](examples/gitlab/depproof.gitlab-ci.yml).
 
 ## Configuration
 
@@ -94,15 +98,17 @@ All inputs are optional. The defaults handle most repos.
     pr-comment: auto
 
     # --- Self-hosted hub (optional) ---
-    # POST each scan report to your depproof-hub for org-wide governance.
+    # POST each scan report to your depproof-hub for org-wide governance; apply exploitation data
+    # and central waivers at scan time. All of it, with the trade-offs, in examples/github/hub.yml.
     report-to: https://hub.example.com/api/v1/scans
     report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
-
-    # Online-mode CI gate: fetch the active waiver set from the hub at scan time and suppress
-    # centrally-waived findings from the gate (the SBOM/report stay raw). Requires report-to +
-    # report-token. Fail-closed: if the hub is unreachable, no waivers are applied and the gate
-    # stays strict — so an unreachable hub can never silently turn a red build green.
     waivers-online: true
+    enrich-online: true
+
+    # --- Coverage gating (optional) ---
+    # Fail the build when a manifest could not be read as a resolved graph. Off by default; the scan
+    # always says so regardless. See examples/github/gradle-exact-graph.yml.
+    require-fidelity: resolved
 ```
 
 ## What gets scanned by default
@@ -133,52 +139,33 @@ the report entirely**, with no error to show for it. The scan says so: it report
 `DECLARED_ONLY` and the hub marks findings from that manifest as measured against an unresolved
 graph.
 
-Add whichever fits your project. Either produces an exact graph; auto-discovery picks the file up
-with no extra configuration.
-
-**A dump, committed nowhere** — one extra step, no change to your build:
-
-```yaml
-- uses: actions/checkout@v4
-- uses: actions/setup-java@v4
-  with: { distribution: temurin, java-version: '21' }
-- run: ./gradlew dependencies > dependencies.txt
-- uses: depproof/depproof-action@v1
-```
-
-**Dependency locking** — a change to your build, and you get reproducible resolution as well:
+Two ways to produce one. Either is picked up by auto-discovery with no extra configuration:
 
 ```bash
-./gradlew dependencies --write-locks   # commit the gradle.lockfile(s) it writes
+./gradlew -q dependencies > dependencies.txt   # a dump, committed nowhere
+./gradlew dependencies --write-locks           # or locking: commit the gradle.lockfile(s) it writes
 ```
+
+**→ The workflow, ready to copy: [`examples/github/gradle-exact-graph.yml`](examples/github/gradle-exact-graph.yml)** —
+including `require-fidelity: resolved`, which makes the exact graph non-optional by failing the build
+until one is present.
 
 ### If your build has more than one project
 
 `dependencies` is a **per-project** task. Run at the root of a multi-module build it reports the
-root project and **nothing else** — so the single-line recipe above leaves every module unread, and
+root project and **nothing else** — so the one-line recipe above leaves every module unread, and
 leaves it unread quietly, because the file it produces is perfectly valid for the one project it
 covers.
 
 depproof matches a dump to the build script **in the same directory**, which is what makes this
 visible rather than silent: a root dump satisfies the root, and each module keeps reporting
-`DECLARED_ONLY` until it has a dump of its own. The scan's coverage warning names them, and counts
-them, so following the advice for a single-module build and finding 35 modules still flagged is the
+`DECLARED_ONLY` until it has a dump of its own. The scan's coverage warning names them and counts
+them, so following the single-module recipe and then finding 35 modules still flagged is the
 expected outcome rather than a bug.
 
-One dump per project, each written beside the build script it answers for:
-
-```yaml
-- run: |
-    ./gradlew -q dependencies > dependencies.txt
-    ./gradlew -q projects | sed -n "s/.*Project '\(:[^']*\)'.*/\1/p" | while read -r p; do
-      dir="$(echo "${p#:}" | tr ':' '/')"
-      ./gradlew -q "$p:dependencies" > "$dir/dependencies.txt"
-    done
-```
-
-(That maps a project path to a directory the conventional way. If your `settings.gradle` points a
-project at some other directory with `projectDir`, write its dump there instead — beside the build
-script is the rule.)
+The per-project loop is in the same example, commented out beside the single-module line. If your
+`settings.gradle` points a project at some other directory with `projectDir`, write its dump there
+instead — beside the build script is the rule.
 
 Dependency locking has the same shape: `--write-locks` locks the configurations the invoked task
 resolved, so it is also per project. Gradle documents a
@@ -186,14 +173,6 @@ resolved, so it is also per project. Gradle documents a
 doing every project in one command; that is a change to your build, and it is yours to make —
 depproof will not add code to your build for you, which is the same rule that stops it running
 Gradle in the first place.
-
-To make this non-optional, gate on it — the build fails until an exact graph is present:
-
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    require-fidelity: resolved
-```
 
 ## Output
 
@@ -334,17 +313,8 @@ threshold merges them without comment.
 - **`fail-on-epss`** — modelled probability of exploitation in the next 30 days. Continuous, so a
   medium at 0.98 outranks a high nobody is attacking.
 
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    report-to: https://hub.example.com/api/v1/scans
-    report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
-    enrich-online: true
-    enrich-mode: targeted    # required for fail-on-epss
-    fail-on-kev: true
-    fail-on-epss: '0.9'
-    fail-on: critical        # unchanged — these are additional rules, not replacements
-```
+Both are additional rules, not replacements: `fail-on` keeps working alongside them.
+**→ [`examples/github/hub.yml`](examples/github/hub.yml)** has the whole configuration.
 
 Findings carry a KEV badge in the HTML report and `depproof:kev` / `depproof:epss` properties in the
 SBOM.
@@ -390,56 +360,28 @@ raised when the scan itself passed, so an upload problem can never mask a real f
 
 ## Examples
 
-### Monorepo / multi-module project
+Complete workflows to copy live in **[`examples/`](examples/)** — each one is the quick start plus a
+single idea:
 
-```yaml
-- uses: depproof/depproof-action@v1
-  # Discovery default — scans every Maven/Gradle/npm/Python manifest under repo root.
-  # Multi-module Maven projects: parent + child POMs are auto-detected and bundled,
-  # so child modules build on their parent locally (no Maven Central round-trip).
-```
+| | |
+|---|---|
+| [`github/basic.yml`](examples/github/basic.yml) | scan everything, fail on a critical, keep the reports |
+| [`github/scheduled.yml`](examples/github/scheduled.yml) | a daily run, for code nobody is changing — where most new risk actually appears |
+| [`github/gradle-exact-graph.yml`](examples/github/gradle-exact-graph.yml) | the resolved Gradle graph, single- and multi-module, then gate on it |
+| [`github/monorepo.yml`](examples/github/monorepo.yml) | exclude subtrees, or one scan and one gate per team |
+| [`github/hub.yml`](examples/github/hub.yml) | push to a self-hosted hub, exploitation data at scan time, central waivers |
+| [`gitlab/depproof.gitlab-ci.yml`](examples/gitlab/depproof.gitlab-ci.yml) | the same scan, gate and summary on GitLab CI |
 
-### Only scan one specific manifest
+Single-input tweaks need no example — set them on the step:
 
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    file: services/api/pom.xml
-```
-
-### Fail on HIGH-or-worse (not just CRITICAL)
-
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    fail-on: high
-```
-
-### Gate on exploitability score rather than the severity label
-
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    fail-on: none          # turn off the severity rule
-    fail-on-cvss: '7.0'    # ...and gate on the computed CVSS base score instead
-```
-
-### Gate only on what your team can actually fix today
-
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    fail-on: high
-    fail-only-if-fix-available: true  # a vuln with no released fix won't block the PR
-```
-
-### Use depproof in a non-blocking advisory mode
-
-```yaml
-- uses: depproof/depproof-action@v1
-  with:
-    fail-on: none  # never fails on findings (scan errors still exit 2); results still in artifacts
-```
+| Want | Set |
+|---|---|
+| Fail on high-or-worse, not just critical | `fail-on: high` |
+| Gate on the computed score, not the label | `fail-on: none` + `fail-on-cvss: '7.0'` |
+| Only block on what can be fixed today | `fail-only-if-fix-available: true` |
+| Advisory mode — never block a PR | `fail-on: none` (scan errors still exit `2`) |
+| One manifest, no discovery | `file: services/api/pom.xml` |
+| Refuse to report on an unresolved graph | `require-fidelity: resolved` |
 
 ## License
 
