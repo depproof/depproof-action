@@ -64,6 +64,15 @@ summary old.json '[{"path":"pom.xml","ecosystem":"Maven"}]'
 out="$(bash "$SCRIPT" "$TMP/old.json")"
 [ -z "$out" ]; check "says nothing about a scan that never reported fidelity" "inventing a claim the engine did not make" $?
 
+# This Action rolls on @v1 while the engine ships as an image, so a new Action WILL meet an older
+# engine. One that reports fidelity but not supersession cannot be filtered honestly — annotating
+# anyway would name every package.json beside its own lockfile.
+summary nosup.json '[{"path":"package.json","ecosystem":"npm","fidelity":"DECLARED_ONLY","fidelityReported":true,
+  "fidelityRemediation":"commit and scan the lockfile"},
+  {"path":"package-lock.json","ecosystem":"npm","fidelity":"RESOLVED","fidelityReported":true}]'
+out="$(bash "$SCRIPT" "$TMP/nosup.json")"
+[ -z "$out" ]; check "stays quiet when the engine never stated supersession" "would cry wolf on every lockfile'd repo" $?
+
 # ---------------------------------------------------------------------------------------------
 printf '\ngrouping and caps\n'
 

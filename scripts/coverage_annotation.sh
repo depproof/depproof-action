@@ -43,9 +43,19 @@ except Exception:
 # A manifest that predates the fidelity fields reports RESOLVED by default, and `fidelityReported`
 # is how we tell "looked and found everything" from "this engine never looked". Say nothing about a
 # scan that never made the claim, rather than inventing a clean bill of health or a false alarm.
+#
+# `superseded` has to be PRESENT, not merely falsy. This Action ships on a rolling `@v1` tag while
+# the engine ships as an image, so a runner can pair a new Action with an older engine — and an
+# engine that never stated supersession cannot be filtered honestly. Deriving it here from the paths
+# instead would be a third copy of that rule; annotating without it would name every package.json
+# that sits beside its own lockfile. Staying quiet costs a display surface for one image bump and
+# never claims something is fine when it is not.
+if not all("superseded" in m for m in manifests):
+    sys.exit(0)
+
 gaps = [
     m for m in manifests
-    if m.get("fidelityReported") and m.get("fidelity", "RESOLVED") != "RESOLVED" and not m.get("superseded")
+    if m.get("fidelityReported") and m.get("fidelity", "RESOLVED") != "RESOLVED" and not m["superseded"]
 ]
 if not gaps:
     sys.exit(0)
