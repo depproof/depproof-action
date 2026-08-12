@@ -150,6 +150,41 @@ with no extra configuration.
 ./gradlew dependencies --write-locks   # commit the gradle.lockfile(s) it writes
 ```
 
+### If your build has more than one project
+
+`dependencies` is a **per-project** task. Run at the root of a multi-module build it reports the
+root project and **nothing else** — so the single-line recipe above leaves every module unread, and
+leaves it unread quietly, because the file it produces is perfectly valid for the one project it
+covers.
+
+depproof matches a dump to the build script **in the same directory**, which is what makes this
+visible rather than silent: a root dump satisfies the root, and each module keeps reporting
+`DECLARED_ONLY` until it has a dump of its own. The scan's coverage warning names them, and counts
+them, so following the advice for a single-module build and finding 35 modules still flagged is the
+expected outcome rather than a bug.
+
+One dump per project, each written beside the build script it answers for:
+
+```yaml
+- run: |
+    ./gradlew -q dependencies > dependencies.txt
+    ./gradlew -q projects | sed -n "s/.*Project '\(:[^']*\)'.*/\1/p" | while read -r p; do
+      dir="$(echo "${p#:}" | tr ':' '/')"
+      ./gradlew -q "$p:dependencies" > "$dir/dependencies.txt"
+    done
+```
+
+(That maps a project path to a directory the conventional way. If your `settings.gradle` points a
+project at some other directory with `projectDir`, write its dump there instead — beside the build
+script is the rule.)
+
+Dependency locking has the same shape: `--write-locks` locks the configurations the invoked task
+resolved, so it is also per project. Gradle documents a
+[`resolveAndLockAll` task](https://docs.gradle.org/current/userguide/dependency_locking.html) for
+doing every project in one command; that is a change to your build, and it is yours to make —
+depproof will not add code to your build for you, which is the same rule that stops it running
+Gradle in the first place.
+
 To make this non-optional, gate on it — the build fails until an exact graph is present:
 
 ```yaml
