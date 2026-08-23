@@ -96,6 +96,24 @@ inputs:
       you are solving.
     required: false
     default: 'false'
+  licenses-online:
+    description: |
+      If 'true', your self-hosted hub answers declared-licence lookups instead of each runner
+      querying the licence sources directly. Requires report-to + report-token.
+
+      Two things this buys. Repositories that share dependencies stop paying separately for the same
+      lookups, so licence resolution that was slow on a large dependency graph becomes fast once
+      another repository has already asked. And a slow or unavailable source degrades in one place
+      rather than in every build at once.
+
+      Independent of enrich-online and of enrich-mode: licences and exploitation data travel
+      separately, so either can come from the hub without the other.
+
+      Fail-closed. With the hub answering, it is the only place licences are fetched from — a
+      component it cannot answer for is reported as unchecked, never as one that declares no licence.
+      Those two look identical in a report and mean opposite things to a compliance reviewer.
+    required: false
+    default: 'false'
   enrich-mode:
     description: |
       How enrichment is fetched. Both are supported and differ in privacy, not quality.
@@ -235,6 +253,7 @@ runs:
         INPUT_REQUIRE_ENRICHMENT: ${{ inputs.require-enrichment }}
         INPUT_ENRICH_ONLINE: ${{ inputs.enrich-online }}
         INPUT_DETECT_ONLINE: ${{ inputs.detect-online }}
+        INPUT_LICENSES_ONLINE: ${{ inputs.licenses-online }}
         INPUT_ENRICH_MODE: ${{ inputs.enrich-mode }}
         INPUT_GO_ONLINE: ${{ inputs.go-online }}
         # Consumed by `gh` for the PR comment only. Scoped to this step like every other credential.
@@ -404,20 +423,6 @@ runs:
           fi
         fi
 
-        # Online-mode enrichment: apply exploitation data from the hub. Unlike waivers this ADDS facts,
-        # so it flows into the SBOM and report too, not just the gate.
-        #
-        # Two modes, differing in privacy rather than quality:
-        #
-        #   bulk     — fetch the whole catalogue here, before the scan, and let depproof match it
-        #              locally. The hub never learns which CVEs this repo has. KEV only: the EPSS
-        #              catalogue is ~355,000 entries and cannot be shipped per run.
-        #   targeted — hand the URL to depproof, which asks the hub mid-scan once the finding ids
-        #              exist. Required for EPSS. The hub learns the findings, and in exchange records
-        #              precisely what this scan was told.
-        #
-        # Bulk is fetched here because the ids do not exist until after the scan, while args are built
-        # before it — that ordering is the whole reason the two modes exist.
         # In-perimeter detection: the hub serves the advisories, the scanner matches versions.
         # Separate from enrichment below, and the order is why: /enrich is keyed on the finding ids,
         # and those do not exist until detection has run.
@@ -433,6 +438,35 @@ runs:
           fi
         fi
 
+        # Licences answered by the hub. Separate from enrichment below and from detection above,
+        # because the three travel independently: a repository can take licences from the hub while
+        # taking exploitation data from a prepared file, which is the common combination.
+        if [ "${INPUT_LICENSES_ONLINE:-false}" = "true" ]; then
+          if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+            # Warn and carry on with the default route: licences still resolve, just not via the hub.
+            # Silently pretending otherwise would be worse than the slower path.
+            echo "::warning::depproof-action: licenses-online needs report-to + report-token — skipping (licences will be fetched directly)."
+          else
+            LICENSES_URL="${INPUT_REPORT_TO%/scans}/enrich"
+            ARGS+=("--licenses-from" "${LICENSES_URL}")
+            echo "depproof-action: licences will be answered by the hub at ${LICENSES_URL}"
+          fi
+        fi
+
+        # Online-mode enrichment: apply exploitation data from the hub. Unlike waivers this ADDS facts,
+        # so it flows into the SBOM and report too, not just the gate.
+        #
+        # Two modes, differing in privacy rather than quality:
+        #
+        #   bulk     — fetch the whole catalogue here, before the scan, and let depproof match it
+        #              locally. The hub never learns which CVEs this repo has. KEV only: the EPSS
+        #              catalogue is ~355,000 entries and cannot be shipped per run.
+        #   targeted — hand the URL to depproof, which asks the hub mid-scan once the finding ids
+        #              exist. Required for EPSS. The hub learns the findings, and in exchange records
+        #              precisely what this scan was told.
+        #
+        # Bulk is fetched here because the ids do not exist until after the scan, while args are built
+        # before it — that ordering is the whole reason the two modes exist.
         if [ "${INPUT_ENRICH_ONLINE:-false}" = "true" ]; then
           if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
             echo "::warning::depproof-action: enrich-online needs report-to + report-token — skipping (no exploitation data applied)."
