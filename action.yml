@@ -77,6 +77,25 @@ inputs:
       build stops rather than reporting a clean result on data it never received.
     required: false
     default: 'false'
+  detect-online:
+    description: |
+      If 'true', get vulnerability advisories from your self-hosted hub instead of querying OSV.dev,
+      and match versions on the runner. Requires report-to + report-token.
+
+      This is the only mode that works with NO route to OSV.dev at all: the hub mirrors the exports
+      on a schedule and the scan makes no outbound call to them. The request sends package names
+      WITHOUT versions, so the hub cannot match even in principle and never learns which versions you
+      run.
+
+      Fail-closed: an unreachable hub, a refused credential or an ecosystem the hub has never
+      mirrored is reported as blocked with every affected component named — never as zero findings.
+      A stale mirror degrades the scan and says so.
+
+      Note it is a different matcher from OSV.dev's, so the same commit can produce slightly
+      different findings than the default path. Leave it off unless egress to OSV.dev is the problem
+      you are solving.
+    required: false
+    default: 'false'
   enrich-mode:
     description: |
       How enrichment is fetched. Both are supported and differ in privacy, not quality.
@@ -121,6 +140,46 @@ inputs:
       scanner may not contact — but rejects a graph that was never resolved at all.
     required: false
     default: 'off'
+  require-enrichment:
+    description: |
+      Fail the build when a source that PRODUCES findings could not be reached: 'complete' or 'off'.
+
+      Left unset, this follows your findings gate: if any fail-on rule is active a blocked source
+      fails the build, because a screen that never ran cannot support a verdict. With
+      `fail-on: none` there is no verdict to corrupt, so it does not fire. Set 'complete' to enforce
+      it even in report-only mode, or 'off' to opt out entirely.
+
+      Only STRUCTURAL refusals fail — a proxy denying egress, a mirror that does not serve your
+      ecosystem, credentials gone. A rate limit or timeout is retried inside the scanner and then
+      reported as a lower bound, because waiting is the right answer to a 429 and a gate that
+      reddens on one is a gate somebody switches off.
+
+      The exit code is 4, deliberately distinct from the 1 a findings failure produces: "never
+      asked" is not "answered badly", and a wrapper reading the code has to be able to tell them
+      apart. Note this is the third rule that can fail a build with an EMPTY findings list — and the
+      one where an empty list is least trustworthy.
+    required: false
+    default: ''
+  policy-online:
+    description: |
+      If 'true', fetch your organisation's gate policy from your self-hosted hub (report-to) at scan
+      time, so gating is set once centrally instead of copy-pasted into every repository's YAML.
+      Requires report-to + report-token.
+
+      Fail-closed, and note which direction that is: if the hub cannot be reached NO org policy is
+      applied and the scanner falls back to its own defaults — which are the strict ones. An outage
+      can never quietly relax your gate, and it can never quietly tighten it either.
+
+      An org policy is published in one of two modes. In WARN it is reported but enforces nothing,
+      so you can see what it would do across the estate before anything goes red; in ENFORCE it is
+      passed to the gate. That distinction exists because this arrow points the opposite way from
+      `waivers-online`: a waiver set can only ever loosen a gate, while an org policy can tighten one
+      across every pipeline you run, from a single change, with no staged rollout.
+
+      A policy value set directly on this Action (for example `require-enrichment`) always wins — a
+      repository can opt into something stricter than the org requires, never weaker.
+    required: false
+    default: 'false'
   waivers-online:
     description: |
       If 'true', fetch the active waiver set from your self-hosted hub (report-to) at scan time and
@@ -172,7 +231,10 @@ runs:
         INPUT_REPORT_TO: ${{ inputs.report-to }}
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
         INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
+        INPUT_POLICY_ONLINE: ${{ inputs.policy-online }}
+        INPUT_REQUIRE_ENRICHMENT: ${{ inputs.require-enrichment }}
         INPUT_ENRICH_ONLINE: ${{ inputs.enrich-online }}
+        INPUT_DETECT_ONLINE: ${{ inputs.detect-online }}
         INPUT_ENRICH_MODE: ${{ inputs.enrich-mode }}
         INPUT_GO_ONLINE: ${{ inputs.go-online }}
         # Consumed by `gh` for the PR comment only. Scoped to this step like every other credential.
@@ -279,6 +341,48 @@ runs:
           fi
         fi
 
+        # Online-mode policy: fetch the org's gate policy from the hub (ADR-0002's reverse arrow) so
+        # gating is authored once centrally rather than copy-pasted into every repository.
+        #
+        # FAIL-CLOSED, and the direction matters. If the fetch fails we apply NO org policy, and the
+        # engine falls back to its own defaults — which are already the strict ones. So an outage can
+        # neither relax a gate nor redden an estate. That is the opposite hazard from waivers-online
+        # below: a waiver set can only ever loosen, while this can tighten every pipeline at once.
+        #
+        # We read `.apply`, not `.policy`. The server resolves WARN vs ENFORCE, so those semantics
+        # live in one place instead of being re-derived by every consumer — a client reading
+        # `.policy` and enforcing it would ignore WARN and redden the estate it was meant to survey.
+        if [ "${INPUT_POLICY_ONLINE:-false}" = "true" ]; then
+          if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+            echo "::warning::depproof-action: policy-online needs report-to + report-token — skipping (scanner defaults apply)."
+          else
+            POLICY_URL="${INPUT_REPORT_TO%/scans}/policy"
+            POLICY_FILE="${RUNNER_TEMP:-/tmp}/.depproof-policy.json"
+            if curl -fsS --max-time 20 \
+                 -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+                 "${POLICY_URL}?repo=${GITHUB_REPOSITORY:-}" \
+                 -o "${POLICY_FILE}"; then
+              # Parsed by a script rather than inline: the value can legitimately be JSON null, and
+              # a regex that cannot tell null from the string "null" would turn "the org stated
+              # nothing" into a flag value the engine rejects as a usage error.
+              ORG_REQUIRE_ENRICHMENT="$(bash "${{ github.action_path }}/scripts/read_policy.sh" "${POLICY_FILE}" apply.requireEnrichment)"
+              export ORG_REQUIRE_ENRICHMENT
+              POLICY_MODE="$(bash "${{ github.action_path }}/scripts/read_policy.sh" "${POLICY_FILE}" policy.mode)"
+              echo "depproof-action: org policy fetched from ${POLICY_URL} (mode=${POLICY_MODE:-unknown})"
+              if [ "${POLICY_MODE}" = "WARN" ]; then
+                # Precise wording, because the obvious phrasing is wrong. WARN means the ORG POLICY is
+                # not applied — it does NOT mean nothing is enforced. The scanner's own defaults still
+                # run, and for a control whose default is already strict (require-enrichment) a build
+                # in WARN can still legitimately go red. Saying "not enforced" beside an exit 4 would
+                # send someone hunting a bug that is not there.
+                echo "::notice::depproof-action: the org gate policy is in WARN mode — published but not applied. The scanner's own defaults still apply, so a build can still fail."
+              fi
+            else
+              echo "::warning::depproof-action: could not fetch the org policy from the hub — scanner defaults apply (fail-closed)."
+            fi
+          fi
+        fi
+
         # Online-mode waivers: fetch the active waiver set from the hub and pass it to the gate so
         # centrally-waived findings don't fail the build. FAIL-CLOSED — if the fetch fails we do NOT
         # apply waivers (the gate stays strict) and warn, so an unreachable hub can never silently
@@ -314,6 +418,21 @@ runs:
         #
         # Bulk is fetched here because the ids do not exist until after the scan, while args are built
         # before it — that ordering is the whole reason the two modes exist.
+        # In-perimeter detection: the hub serves the advisories, the scanner matches versions.
+        # Separate from enrichment below, and the order is why: /enrich is keyed on the finding ids,
+        # and those do not exist until detection has run.
+        if [ "${INPUT_DETECT_ONLINE:-false}" = "true" ]; then
+          if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+            # A warning and the default path, not a silent one: without a hub there is still a working
+            # detection route (OSV.dev), so falling back is honest — pretending we used the hub is not.
+            echo "::warning::depproof-action: detect-online needs report-to + report-token — skipping (advisories will come from OSV.dev)."
+          else
+            ADVISORIES_URL="${INPUT_REPORT_TO%/scans}/advisories"
+            ARGS+=("--advisories-from" "${ADVISORIES_URL}")
+            echo "depproof-action: advisories will be served by the hub at ${ADVISORIES_URL} (no call to OSV.dev)"
+          fi
+        fi
+
         if [ "${INPUT_ENRICH_ONLINE:-false}" = "true" ]; then
           if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
             echo "::warning::depproof-action: enrich-online needs report-to + report-token — skipping (no exploitation data applied)."
@@ -349,6 +468,22 @@ runs:
         # and the engine rejects an unrecognised value as a usage error rather than ignoring it.
         if [ -n "${{ inputs.require-fidelity }}" ] && [ "${{ inputs.require-fidelity }}" != "off" ]; then
           ARGS+=("--require-fidelity=${{ inputs.require-fidelity }}")
+        fi
+
+        # Source reachability. Passed ONLY when a value was stated: the flag is tri-state in the
+        # engine, where "unstated" means "follow the findings gate" and is not the same as "off".
+        # Sending off for a blank input would silently disable a control nobody switched off.
+        #
+        # Precedence: this repository's own input wins over the org policy fetched above. A repo may
+        # opt into something STRICTER than the org requires; it can never talk itself down, because
+        # the org value only reaches ORG_REQUIRE_ENRICHMENT when the hub said ENFORCE.
+        REQUIRE_ENRICHMENT="${INPUT_REQUIRE_ENRICHMENT:-}"
+        if [ -z "$REQUIRE_ENRICHMENT" ] && [ -n "${ORG_REQUIRE_ENRICHMENT:-}" ]; then
+          REQUIRE_ENRICHMENT="${ORG_REQUIRE_ENRICHMENT}"
+          echo "depproof-action: applying org policy require-enrichment=${REQUIRE_ENRICHMENT}"
+        fi
+        if [ -n "$REQUIRE_ENRICHMENT" ]; then
+          ARGS+=("--require-enrichment=${REQUIRE_ENRICHMENT}")
         fi
 
         # Exploitation gating. Only passed when enrichment was actually arranged: the engine rejects
@@ -409,6 +544,14 @@ runs:
         # `require-fidelity` remains the only thing that can fail a build over coverage.
         bash "${{ github.action_path }}/scripts/coverage_annotation.sh" \
           "${OUTPUT_DIR}/depproof-summary.json" "${{ inputs.require-fidelity }}" || true
+
+        # Source reachability, on the same surface and for a sharper version of the same reason. A
+        # coverage gap means the findings came from part of the graph; an unreached source means they
+        # came from no screen at all, and that is indistinguishable from a clean project unless
+        # something says so where the green tick is. Never fails the step: the engine already decided
+        # the verdict and exited 4 if it mattered.
+        bash "${{ github.action_path }}/scripts/sources_annotation.sh" \
+          "${OUTPUT_DIR}/depproof-summary.json" || true
 
         if [ "${{ inputs.job-summary }}" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
           bash "$BODY_SH" "$SUMMARY_MD" "$DEPPROOF_EXIT" >> "$GITHUB_STEP_SUMMARY" \
