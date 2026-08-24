@@ -340,16 +340,32 @@ runs:
           fi
         fi
 
-        # Go online resolution: when `go` is on the runner, produce the exact resolved module list
-        # (`go list -m -json all`) as `go.deps.json` next to each `go.mod`. Discovery then prefers
-        # `go.deps.json` over `go.mod`. Best-effort — falls back to the static `go.mod` parse if `go`
-        # is missing or `go list` errors ("declare it, don't guess", like Gradle static parse).
+        # Go online resolution: when `go` is on the runner, produce the resolved graph as
+        # `go.deps.json` next to each `go.mod`. Discovery then prefers `go.deps.json` over `go.mod`.
+        #
+        # THREE TIERS, each a strict superset of the information below it, tried best-first:
+        #
+        #   1. `go list -deps -test -json ./...` — PACKAGE level. The only Go input that can answer
+        #      "does this ship": modules reached only through a test binary's imports are test-only,
+        #      and nothing else records that. `go.mod` does not mark test requirements and
+        #      `go list -m` lists modules, not packages, so neither can.
+        #   2. `go list -m -json all` — MODULE level. The exact MVS build list, no scope. What this
+        #      step produced before, and still the answer when tier 1 cannot run.
+        #   3. the static `go.mod` parse, in the engine.
+        #
+        # Tier 1 is tried first and is the more fragile of the two: it type-checks the packages, so it
+        # fails on a tree that does not build, where tier 2 succeeds from the module graph alone. That
+        # is why it falls back rather than replacing — a repository that cannot compile should lose
+        # the scope, not the whole dependency graph.
         if [ "${INPUT_GO_ONLINE:-true}" = "true" ]; then
           if command -v go >/dev/null 2>&1; then
             while IFS= read -r gomod; do
               gdir="$(dirname "$gomod")"
-              if ( cd "$gdir" && GOFLAGS=-mod=mod go list -m -json all > go.deps.json 2>/dev/null ); then
-                echo "depproof-action: resolved ${gdir}/go.mod via 'go list -m -json all'"
+              if ( cd "$gdir" && GOFLAGS=-mod=mod go list -deps -test -json ./... > go.deps.json 2>/dev/null ) \
+                 && [ -s "${gdir}/go.deps.json" ]; then
+                echo "depproof-action: resolved ${gdir}/go.mod via 'go list -deps -test -json ./...' (with scope)"
+              elif ( cd "$gdir" && GOFLAGS=-mod=mod go list -m -json all > go.deps.json 2>/dev/null ); then
+                echo "depproof-action: resolved ${gdir}/go.mod via 'go list -m -json all' (no test/build split)"
               else
                 rm -f "${gdir}/go.deps.json"
                 echo "::warning::depproof-action: 'go list' failed in ${gdir} — using the static go.mod parse"

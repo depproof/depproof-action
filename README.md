@@ -129,7 +129,7 @@ All inputs are optional. The defaults handle most repos.
     # Also emit a human-readable HTML report (depproof-report.html). Default: true
     html: true
 
-    # Go: resolve the exact module graph with `go list -m -json all` when `go` is on the runner
+    # Go: resolve the exact graph — with test-vs-build scope — when `go` is on the runner
     # (falls back to a static go.mod parse otherwise). Default: true.
     go-online: true
 
@@ -161,7 +161,7 @@ Auto-discovery finds these manifests anywhere in your repo:
 - `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle) — a `gradle.lockfile` or `dependencies.txt` gives the **exact** resolved graph; a bare build script is a best-effort read and dependencies whose versions come from a BOM or plugin may be missing entirely, so [produce one in a prior CI step](#getting-an-exact-gradle-graph)
 - `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
 - `poetry.lock`, `pdm.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` (Python) — resolved from the lockfile; a lockless `pyproject.toml` is a minimum-version fallback, so commit a lockfile (or generate one in a prior CI step) for an exact result
-- `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -m -json all` on the runner for the **exact** resolved module graph (written to `go.deps.json`, preferred over `go.mod`); it falls back to a static `go.mod` parse (direct + `// indirect` requires, `replace` applied) when `go` isn't on the runner
+- `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -deps -test -json ./...` on the runner for the **exact** resolved graph **including which modules only tests need** (written to `go.deps.json`, preferred over `go.mod`). If that fails — it type-checks, so a tree that does not build will — it falls back to `go list -m -json all`, which is still exact but carries no test/build split, and then to a static `go.mod` parse when `go` isn't on the runner
 
 And **skips** these directories (build output and vendored code — nothing to audit there):
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`
@@ -170,10 +170,10 @@ Use `exclude` to add custom glob patterns on top of the defaults.
 
 ## Getting an exact Gradle graph
 
-**Why this needs a step from you.** For Go, the action runs `go list -m -json all` itself — that
-command only reads module metadata. A Gradle build script is different: it is arbitrary code, and a
-scanner that executes it would run untrusted code on your runner. depproof therefore never invokes
-Gradle. The resolved graph can only come from your own build, which already has the right JDK,
+**Why this needs a step from you.** For Go, the action runs `go list` itself. That command resolves
+and type-checks packages — more than reading metadata — but it never *executes* your code. A Gradle
+build script is different in kind: it **is** code, and evaluating it to learn the dependency graph
+means running untrusted code on your runner. depproof therefore never invokes Gradle. The resolved graph can only come from your own build, which already has the right JDK,
 Gradle version and credentials for private repositories.
 
 Without it, depproof reads `build.gradle` statically. Versions supplied by a BOM, a platform or a
