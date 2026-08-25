@@ -343,7 +343,7 @@ runs:
         # Go online resolution: when `go` is on the runner, produce the resolved graph as
         # `go.deps.json` next to each `go.mod`. Discovery then prefers `go.deps.json` over `go.mod`.
         #
-        # THREE TIERS, each a strict superset of the information below it, tried best-first:
+        # THREE TIERS, tried best-first:
         #
         #   1. `go list -deps -test -json ./...` — PACKAGE level. The only Go input that can answer
         #      "does this ship": modules reached only through a test binary's imports are test-only,
@@ -352,6 +352,15 @@ runs:
         #   2. `go list -m -json all` — MODULE level. The exact MVS build list, no scope. What this
         #      step produced before, and still the answer when tier 1 cannot run.
         #   3. the static `go.mod` parse, in the engine.
+        #
+        # THE TIERS ARE NOT NESTED, and this comment used to claim they were. Tier 1 lists the
+        # modules that supply a package the build actually LOADS; tier 2 lists the whole MVS build
+        # list. On docker/compose that is 129 modules against 410 — tier 1 omits 281 modules that
+        # are required but from which no package is ever imported. Tier 1 is also GOOS-specific
+        # (129 darwin / 130 linux / 133 windows), because `go list` resolves build constraints.
+        #
+        # So moving from tier 2 to tier 1 buys scope and PAYS coverage. That trade has not been
+        # decided — see docs/ops/next-steps.md. Do not describe it as a free upgrade.
         #
         # Tier 1 is tried first and is the more fragile of the two: it type-checks the packages, so it
         # fails on a tree that does not build, where tier 2 succeeds from the module graph alone. That
