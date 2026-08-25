@@ -372,25 +372,28 @@ runs:
         # Go online resolution: when `go` is on the runner, produce the resolved graph as
         # `go.deps.json` next to each `go.mod`. Discovery then prefers `go.deps.json` over `go.mod`.
         #
-        # THREE TIERS, tried best-first:
+        # TWO FILES, because neither can be the other:
         #
-        #   1. `go list -deps -test -json ./...` — PACKAGE level. The only Go input that can answer
-        #      "does this ship": modules reached only through a test binary's imports are test-only,
-        #      and nothing else records that. `go.mod` does not mark test requirements and
-        #      `go list -m` lists modules, not packages, so neither can.
-        #   2. `go list -m -json all` — MODULE level. The exact MVS build list, no scope. What this
-        #      step produced before, and still the answer when tier 1 cannot run.
-        #   3. the static `go.mod` parse, in the engine.
+        #   `go.deps.json` <- `go list -m -json all` — the COMPONENT SET. The exact build list, every
+        #      module the build requires, with direct/indirect and `replace` already resolved by Go.
+        #   `go.pkgs.json` <- `go list -deps -test -json ./...` — the SCOPE. One object per package,
+        #      including the ones pulled in only to compile tests, which is the only place Go records
+        #      what ships: `go.mod` does not mark test requirements and `go list -m` lists modules,
+        #      not packages, so neither can answer it.
         #
-        # THE TIERS ARE NOT NESTED, and this comment used to claim they were. Tier 1 lists the
-        # modules that supply a package the build actually LOADS; tier 2 lists the whole build list.
-        # So tier 1 omits modules that are required but from which no package is ever imported, and
-        # on a large module graph that can be most of them. It is GOOS-specific besides, because
-        # `go list` resolves build constraints — a scan on Linux and a scan on macOS will not report
-        # the same Go dependency set.
+        # BOTH, rather than preferring the package one, because they are not nested. The package
+        # stream covers only modules supplying a package the build actually LOADS, and omits every
+        # module that is required but never imported from — on a large module graph that can be most
+        # of them. It is GOOS-specific besides, since `go list` resolves build constraints, so a Linux
+        # runner and a macOS runner do not agree on it. Preferring it would buy scope and silently
+        # pay coverage; emitting both keeps the full component set and scopes what it can.
         #
-        # So moving from tier 2 to tier 1 buys scope and PAYS coverage. That trade is under review;
-        # do not describe it as a free upgrade.
+        # The engine merges them: modules the package stream never mentions report no scope rather
+        # than a guess. `go.pkgs.json` is a sidecar, not a manifest — nothing scans it on its own.
+        #
+        # The package command type-checks, so it fails on a tree that does not compile while the
+        # module graph still resolves. That is why it is emitted best-effort and separately: a
+        # repository that cannot build should lose the scope, not the whole dependency graph.
         #
         # Tier 1 is tried first and is the more fragile of the two: it type-checks the packages, so it
         # fails on a tree that does not build, where tier 2 succeeds from the module graph alone. That
@@ -400,13 +403,19 @@ runs:
           if command -v go >/dev/null 2>&1; then
             while IFS= read -r gomod; do
               gdir="$(dirname "$gomod")"
-              if ( cd "$gdir" && GOFLAGS=-mod=mod go list -deps -test -json ./... > go.deps.json 2>/dev/null ) \
+              if ( cd "$gdir" && GOFLAGS=-mod=mod go list -m -json all > go.deps.json 2>/dev/null ) \
                  && [ -s "${gdir}/go.deps.json" ]; then
-                echo "depproof-action: resolved ${gdir}/go.mod via 'go list -deps -test -json ./...' (with scope)"
-              elif ( cd "$gdir" && GOFLAGS=-mod=mod go list -m -json all > go.deps.json 2>/dev/null ); then
-                echo "depproof-action: resolved ${gdir}/go.mod via 'go list -m -json all' (no test/build split)"
+                # The scope sidecar is best-effort ON TOP, never instead: it type-checks, so it fails
+                # on a tree that does not compile, and losing it must not cost the dependency graph.
+                if ( cd "$gdir" && GOFLAGS=-mod=mod go list -deps -test -json ./... > go.pkgs.json 2>/dev/null ) \
+                   && [ -s "${gdir}/go.pkgs.json" ]; then
+                  echo "depproof-action: resolved ${gdir}/go.mod — full module list, with scope"
+                else
+                  rm -f "${gdir}/go.pkgs.json"
+                  echo "depproof-action: resolved ${gdir}/go.mod — full module list, no scope ('go list -deps' failed; does the tree build?)"
+                fi
               else
-                rm -f "${gdir}/go.deps.json"
+                rm -f "${gdir}/go.deps.json" "${gdir}/go.pkgs.json"
                 echo "::warning::depproof-action: 'go list' failed in ${gdir} — using the static go.mod parse"
               fi
             done < <(find "${ROOT}" -name go.mod -not -path '*/vendor/*' 2>/dev/null)
