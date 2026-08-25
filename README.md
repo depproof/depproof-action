@@ -116,6 +116,7 @@ All inputs are optional. The defaults handle most repos.
     fail-on-cvss: '7.5'               # fail on computed CVSS base score >= 7.5
     fail-on-unknown: false            # fail on findings that could not be graded at all
     fail-only-if-fix-available: false # only findings with a known fix can fail the build
+    ignore-scope: ''                  # e.g. 'development' — dependencies you do not ship cannot fail the build
 
     # Discovery root. Default: $GITHUB_WORKSPACE
     root: backend
@@ -321,6 +322,7 @@ matching *any* active rule fails the build:
 | `fail-on-cvss: <n>` | computed CVSS base score >= `n` (0.0–10.0) |
 | `fail-on-unknown: true` | the finding could not be graded at all |
 | `fail-only-if-fix-available: true` | **narrows** all of the above to findings with a known fix |
+| `ignore-scope: development` | **narrows** all of the above to dependencies you ship — see below |
 | `fail-on-kev: true` | the finding is listed as known-exploited (requires `enrich-online`) |
 
 Two details worth knowing:
@@ -342,6 +344,41 @@ depproof — gate: severity high or above or CVSS score 7.0 or above
 ```
 
 CVSS scores come from the advisory's CVSS vector, which is also recorded in the CycloneDX SBOM.
+
+### Gating only on what you ship (`ignore-scope`)
+
+A test runner is not in the artifact you deploy. `ignore-scope: development` stops findings on
+development dependencies failing the build — on the reference corpus that is a little over half of
+everything a gate looks at. Off by default; findings are still scanned, reported, pushed to the hub
+and present in the SBOM, so this changes the **gate** and nothing else.
+
+Three things to know before turning it on, because this is the one control that can make a build
+pass that would otherwise have failed:
+
+- **It narrows every rule, including `fail-on-kev`** — unlike `fail-only-if-fix-available`, which
+  exempts it. The two answer different questions: fix-availability is about whether a finding is
+  *actionable*, and a known-exploited vulnerability is urgent either way; scope is about whether the
+  code is *exposed at all*, which applies uniformly. A suppressed known-exploited finding is printed
+  by name and manifest on stderr rather than counted, because a development dependency still runs on
+  your build machines.
+- **A dependency nobody could classify is never suppressed.** Some manifests genuinely cannot state
+  a scope — a Gradle version catalogue, a bare `go.mod`. Those report *not determined*, which is not
+  a scope, and they stay in the gate. `ignore-scope: undetermined` is rejected outright.
+- **An unknown scope is an error, not a no-op.** `ignore-scope: dev` — what npm calls it — fails the
+  run rather than quietly narrowing nothing, so you never believe a gate is scoped when it is not.
+  Valid values: `development`, `optional`, `provided`, `runtime`.
+
+Every scan prints the scope breakdown of its findings whether or not the input is set, so you can
+see what this would cost before you opt in:
+
+```
+depproof — gate: severity high or above, ignoring development dependencies
+  by scope:   88 development, 16 runtime
+  scope:      88 vuln finding(s) excluded by --ignore-scope (88 development)
+              · yarn.lock: CVE-2021-44906 critical  :minimist:1.2.0 (development)
+  result:     FAIL — 8 finding(s) tripped the gate
+    package.json: CVE-2019-10744 critical cvss 9.1  :lodash:4.16.2 fix 4.17.12  [severity>=high]
+```
 
 ### Gating on exploitation (requires a hub)
 
