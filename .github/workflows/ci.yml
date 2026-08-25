@@ -60,6 +60,12 @@ jobs:
       # The action is a composite whose body is one large bash script inside a YAML block scalar.
       # Both halves can break independently and neither shows up until a consumer's build fails:
       # a mis-indented heredoc breaks the YAML, and a typo breaks the shell. Cheap to check here.
+      # `bash -n` below proves the shell PARSES. This proves an input actually reaches the engine:
+      # a wiring that silently drops `ignore-scope` leaves valid YAML, valid shell, and a gate that
+      # is never narrowed, with nothing anywhere to explain the build that failed.
+      - name: Action argument tests
+        run: bash tests/test_action_args.sh
+
       - name: action.yml parses, and its shell is syntactically valid
         run: |
           # PyYAML ships in the ubuntu-latest image, but this check exists to catch a broken

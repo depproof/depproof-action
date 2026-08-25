@@ -77,3 +77,14 @@ independently, in a repository with no build step, where a break does not fail h
 consumer's pipeline at `@v1`. CI therefore parses `action.yml` and runs `bash -n` over the embedded
 script. That check earned itself immediately: multi-line Python in a `run:` block broke the YAML
 during development.
+
+`test_action_args.sh` covers the failure `bash -n` cannot see: an input wired to nothing. It
+extracts the composite step, rewrites each `${{ inputs.x }}` to `${IN_X:-}` so real values can be
+driven from the environment, replaces `docker` with a recorder, and asserts on the argv the engine
+would have received. An `ignore-scope` that never becomes `--ignore-scope` is valid YAML and valid
+shell producing a build that fails when the user expected it to pass, with no error to explain it.
+
+It runs the step under bash 5 — the host's if new enough, `bash:5` in Docker otherwise. GitHub
+runners expand an empty array under `set -u` happily; macOS bash 3.2 treats it as an error and
+aborts on `"${DOCKER_ENV[@]}"` for a reason no consumer will ever hit. Testing under the shell the
+Action actually gets is worth more than weakening the Action for one it never runs on.
