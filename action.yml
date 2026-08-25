@@ -142,6 +142,28 @@ inputs:
       known-exploited finding with no fix is the most urgent one in the report.
     required: false
     default: 'false'
+  ignore-scope:
+    description: |
+      Dependency scopes whose findings cannot fail the build (comma-separated). Off by default.
+
+      `development` is the usual one. A test-only dependency is not in the artifact you ship, so a
+      build going red on a `junit` finding that the dashboard's shipping filter hides is two tools
+      telling a team different things — and the one they stop believing is the stricter one.
+
+      Unlike `fail-only-if-fix-available` this narrows EVERY rule, KEV included: scope is about
+      whether the code is exposed at all, which is uniform across rules, and a flag that still went
+      red on a known-exploited finding in `junit` would not do what you turned it on for. The
+      counterweight is that suppressed findings are listed by name and manifest in the log, and a
+      suppressed known-exploited finding is called out separately on stderr.
+
+      A scope nobody determined is NEVER suppressed, and `undetermined` is rejected as a value: it
+      is the absence of a scope, not one. Every run prints the scope breakdown of its findings, so
+      you can see what this would cost before you turn it on.
+
+      Findings are still scanned, reported, pushed to the hub and present in the SBOM — this changes
+      the GATE only.
+    required: false
+
   require-fidelity:
     description: |
       Fail the build when a manifest's dependency graph could not be fully resolved: 'resolved',
@@ -306,6 +328,13 @@ runs:
         fi
         if [ "${{ inputs.fail-only-if-fix-available }}" = "true" ]; then
           ARGS+=("--fail-only-if-fix-available")
+        fi
+        # Narrows every rule including KEV, unlike the flag above — see the input's description.
+        # Passed through verbatim so the engine validates it: a scope word it does not know is a
+        # usage error there, which is the right place for it. Silently dropping a typo here would
+        # leave a gate the caller believes is scoped and is not.
+        if [ -n "${{ inputs.ignore-scope }}" ]; then
+          ARGS+=("--ignore-scope" "${{ inputs.ignore-scope }}")
         fi
         ARGS+=("--output-dir" "/workspace/$(realpath --relative-to="$GITHUB_WORKSPACE" "$OUTPUT_DIR" 2>/dev/null || echo .)")
 
