@@ -383,13 +383,14 @@ runs:
         #   3. the static `go.mod` parse, in the engine.
         #
         # THE TIERS ARE NOT NESTED, and this comment used to claim they were. Tier 1 lists the
-        # modules that supply a package the build actually LOADS; tier 2 lists the whole MVS build
-        # list. On docker/compose that is 129 modules against 410 — tier 1 omits 281 modules that
-        # are required but from which no package is ever imported. Tier 1 is also GOOS-specific
-        # (129 darwin / 130 linux / 133 windows), because `go list` resolves build constraints.
+        # modules that supply a package the build actually LOADS; tier 2 lists the whole build list.
+        # So tier 1 omits modules that are required but from which no package is ever imported, and
+        # on a large module graph that can be most of them. It is GOOS-specific besides, because
+        # `go list` resolves build constraints — a scan on Linux and a scan on macOS will not report
+        # the same Go dependency set.
         #
-        # So moving from tier 2 to tier 1 buys scope and PAYS coverage. That trade has not been
-        # decided — see docs/ops/next-steps.md. Do not describe it as a free upgrade.
+        # So moving from tier 2 to tier 1 buys scope and PAYS coverage. That trade is under review;
+        # do not describe it as a free upgrade.
         #
         # Tier 1 is tried first and is the more fragile of the two: it type-checks the packages, so it
         # fails on a tree that does not build, where tier 2 succeeds from the module graph alone. That

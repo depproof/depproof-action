@@ -348,9 +348,11 @@ CVSS scores come from the advisory's CVSS vector, which is also recorded in the 
 ### Gating only on what you ship (`ignore-scope`)
 
 A test runner is not in the artifact you deploy. `ignore-scope: development` stops findings on
-development dependencies failing the build — on the reference corpus that is a little over half of
-everything a gate looks at. Off by default; findings are still scanned, reported, pushed to the hub
-and present in the SBOM, so this changes the **gate** and nothing else.
+development dependencies failing the build, which on a project with a large toolchain can be a
+substantial share of what a gate looks at. Off by default; findings are still scanned, reported,
+pushed to the hub and present in the SBOM, so this changes the **gate** and nothing else — and every
+scan prints its own breakdown, so you can see what it would cost on YOUR repository rather than
+taking a number on trust.
 
 Three things to know before turning it on, because this is the one control that can make a build
 pass that would otherwise have failed:
