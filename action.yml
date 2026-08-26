@@ -164,6 +164,38 @@ inputs:
       the GATE only.
     required: false
 
+  internal:
+    description: |
+      YOUR OWN packages, published to a private registry rather than a public one (comma-separated
+      globs). Off by default.
+
+      Matched against `groupId:artifactId`, or the bare package name where the ecosystem has no
+      group. `*` matches within a segment, `**` across. For example:
+      `com.acme.internal:*,@acme/*,github.acme.internal/**`
+
+      No public advisory source has ever held a record of your private library, so screening it
+      against one and finding nothing is not a clean result — it is a question nobody asked.
+      Declaring it here makes the scan say so: these packages are never screened, and every one is
+      reported as UNKNOWN status rather than counted as clean. The SBOM stops asserting they came
+      from Maven Central or PyPI too, which matters in a document whose whole job is provenance.
+
+      **These never fail the build.** Not the severity rules, not `require-fidelity`, not
+      `require-enrichment`. No action available to you clears the condition — you cannot publish a
+      private library to a public registry, and this scanner cannot read your registry — so a gate
+      that failed on it would be a gate you had to switch off, which would cost you everything else
+      it catches. Status unknown is reported, never enforced.
+
+      You do NOT need this for code inside the repository being scanned. A Maven reactor sibling, a
+      Gradle `project(':core')`, a Go `replace` onto a local path, a Python `-e ./libs/core` and an
+      npm workspace member are all detected automatically and marked first-party — another manifest
+      in the same scan already covers them.
+
+      Nothing is inferred: an undeclared private package stays third-party and is screened, which
+      over-reports rather than going quiet. If you report to a depproof-hub, an internal dependency
+      is also matched against what your other repositories publish, so it resolves either to the
+      repo that builds it or to "no scanned repo publishes this" — a gap you can act on.
+    required: false
+
   require-fidelity:
     description: |
       Fail the build when a manifest's dependency graph could not be fully resolved: 'resolved',
@@ -335,6 +367,13 @@ runs:
         # leave a gate the caller believes is scoped and is not.
         if [ -n "${{ inputs.ignore-scope }}" ]; then
           ARGS+=("--ignore-scope" "${{ inputs.ignore-scope }}")
+        fi
+        # Your own packages on a private registry. Passed verbatim for the same reason as the flag
+        # above: the engine owns glob validation, and a pattern silently dropped here would leave a
+        # caller believing their internal libraries are declared when they are being screened
+        # against a public registry and reported clean.
+        if [ -n "${{ inputs.internal }}" ]; then
+          ARGS+=("--internal" "${{ inputs.internal }}")
         fi
         ARGS+=("--output-dir" "/workspace/$(realpath --relative-to="$GITHUB_WORKSPACE" "$OUTPUT_DIR" 2>/dev/null || echo .)")
 

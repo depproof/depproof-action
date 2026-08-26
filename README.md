@@ -117,6 +117,7 @@ All inputs are optional. The defaults handle most repos.
     fail-on-unknown: false            # fail on findings that could not be graded at all
     fail-only-if-fix-available: false # only findings with a known fix can fail the build
     ignore-scope: ''                  # e.g. 'development' — dependencies you do not ship cannot fail the build
+    internal: ''                      # e.g. 'com.acme.internal:*' — YOUR packages on a private registry
 
     # Discovery root. Default: $GITHUB_WORKSPACE
     root: backend
@@ -323,6 +324,7 @@ matching *any* active rule fails the build:
 | `fail-on-unknown: true` | the finding could not be graded at all |
 | `fail-only-if-fix-available: true` | **narrows** all of the above to findings with a known fix |
 | `ignore-scope: development` | **narrows** all of the above to dependencies you ship — see below |
+| `internal: <globs>` | **never a rule.** Your own private-registry packages report status unknown and cannot fail the build — see below |
 | `fail-on-kev: true` | the finding is listed as known-exploited (requires `enrich-online`) |
 
 Two details worth knowing:
@@ -380,6 +382,56 @@ depproof — gate: severity high or above, ignoring development dependencies
               · yarn.lock: CVE-2021-44906 critical  :minimist:1.2.0 (development)
   result:     FAIL — 8 finding(s) tripped the gate
     package.json: CVE-2019-10744 critical cvss 9.1  :lodash:4.16.2 fix 4.17.12  [severity>=high]
+```
+
+### Your own packages on a private registry (`internal`)
+
+Most companies publish shared libraries to their own Nexus, Artifactory or package index. Those
+coordinates exist nowhere public, so **no advisory source has ever held a record of them** — and a
+scanner that looks them up against a public registry, finds nothing, and reports them clean has not
+checked anything. It has answered a question nobody asked.
+
+```yaml
+    internal: 'com.acme.internal:*,@acme/*,github.acme.internal/**'
+```
+
+Matched against `groupId:artifactId`, or the bare package name where the ecosystem has no group.
+`*` matches within a segment, `**` across.
+
+What changes when you declare them:
+
+- They are **never screened**, and each one is reported as **status unknown** rather than counted
+  clean. A row that says nothing is a row that was never checked, and it now says so.
+- The **SBOM stops claiming they came from a public registry.** A purl states where a package came
+  from; asserting your private library came from Maven Central is a false claim in the one document
+  whose entire purpose is provenance. They carry `depproof:provenance` and `depproof:screened=false`
+  instead.
+- If you report to a **depproof-hub**, an internal dependency is matched against what your other
+  repositories publish. It resolves either to the repo that builds it — findings one click away — or
+  to *"no scanned repo publishes this"*, which is a gap you can act on by onboarding that repo. No
+  public scanner can answer that question for you, because the coordinate is private.
+
+**These never fail the build.** Not the severity rules, not `require-fidelity`, not
+`require-enrichment`. No action available to you clears the condition — you cannot publish a private
+library to a public registry, and this scanner cannot read your registry — so a gate that failed on
+it would be a gate you had to switch off, and switching it off would cost you everything else it
+catches. Status unknown is reported, never enforced.
+
+**You do not need this for code inside the repository being scanned.** A Maven reactor sibling, a
+Gradle `project(':core')`, a Go `replace` onto a local path, a Python `-e ./libs/core` and an npm
+workspace member are detected automatically and marked *first-party* — another manifest in the same
+scan already covers them, so there was nothing to screen rather than something that could not be.
+
+Nothing is inferred from a name. An undeclared private package stays third-party and is screened,
+which over-reports rather than going quiet:
+
+```
+depproof — scanned app/pom.xml (Maven)
+  components: 3  (2 direct, 1 transitive)
+  first-party: 1 in this repository — not screened, nothing to screen
+  internal:   1 declared internal — status UNKNOWN, not clean; no advisory source covers these and none was asked
+              · com.acme.internal:shared-auth:2.3.0
+              These never fail the build. Status unknown is reported, never enforced.
 ```
 
 ### Gating on exploitation (requires a hub)
