@@ -84,6 +84,15 @@ driven from the environment, replaces `docker` with a recorder, and asserts on t
 would have received. An `ignore-scope` that never becomes `--ignore-scope` is valid YAML and valid
 shell producing a build that fails when the user expected it to pass, with no error to explain it.
 
+`internal` is the quietest failure of the set, and gets an extra case for it. Wired to nothing, the
+scan screens the caller's private libraries against a public registry, matches nothing, and reports
+them **clean** — indistinguishable from a genuinely clean result, with nothing anywhere to say a
+question went unasked. Its value is also the first in this file to contain a glob, which caught a
+trap in the assertions themselves: `grep -x` reads its pattern as a regex, so `com.acme.internal:*`
+matches `com.acme.internal` with any number of colons and never its own literal. Metacharacter
+values need `grep -qxF`. A separate case runs the step from a directory holding a decoy filename, to
+prove the shell does not expand the glob before the engine sees it.
+
 It runs the step under bash 5 — the host's if new enough, `bash:5` in Docker otherwise. GitHub
 runners expand an empty array under `set -u` happily; macOS bash 3.2 treats it as an error and
 aborts on `"${DOCKER_ENV[@]}"` for a reason no consumer will ever hit. Testing under the shell the

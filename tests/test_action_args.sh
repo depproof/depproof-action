@@ -111,6 +111,35 @@ argv | grep -qx -- "development,optional"
 check "a comma-separated value survives as one argument" \
       "split across two argv entries the engine sees a stray positional and fails" $?
 
+# `internal` — the failure here is the quietest of any input in this file. Wired to nothing, the
+# scan screens the caller's private libraries against a public registry, matches nothing, and reports
+# them CLEAN, which is indistinguishable from a genuinely clean result. No error, no warning, and a
+# security team believing a question was asked that never was.
+run "${BASE[@]}" IN_INTERNAL='com.acme.internal:*'
+argv | grep -qxF -- "--internal" && argv | grep -qxF -- "com.acme.internal:*"
+check "internal reaches the engine" \
+      "private packages are screened against a public registry and reported clean" $?
+
+run "${BASE[@]}"
+argv | grep -qxF -- "--internal"
+[ $? -ne 0 ]
+check "an unset internal passes no flag" \
+      "an empty value would become --internal '' and declare nothing while looking configured" $?
+
+run "${BASE[@]}" IN_INTERNAL='com.acme.internal:*,@acme/*'
+argv | grep -qxF -- "com.acme.internal:*,@acme/*"
+check "a comma-separated glob list survives as one argument" \
+      "split across two argv entries the engine sees a stray positional and fails" $?
+
+# A glob must reach the engine as a LITERAL. Unquoted, the shell expands `*` against the working
+# directory, so `com.acme.internal:*` becomes whatever files happen to sit beside the checkout —
+# declaring nothing internal, on a runner whose contents nobody controls.
+mkdir -p "$H/globtest" && : > "$H/globtest/com.acme.internal:decoy"
+( cd "$H/globtest" && run "${BASE[@]}" IN_INTERNAL='com.acme.internal:*' )
+argv | grep -qxF -- "com.acme.internal:*"
+check "a glob is not expanded by the shell before it reaches the engine" \
+      "the pattern becomes a filename from the runner and declares nothing" $?
+
 run "${BASE[@]}" IN_FAIL_ON=high
 argv | grep -qx -- "high"
 check "fail-on reaches the engine" "the gate threshold silently reverts to the engine default" $?
