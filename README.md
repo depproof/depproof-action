@@ -61,7 +61,7 @@ your repo
 
 That `uses:` line is the whole integration. There is nothing to vendor, install, or keep in sync —
 no config file of ours in your repo, no runner dependencies (no local Java, Maven, Gradle or Node
-needed). `@v1` is a rolling major tag that picks up fixes; pin to a full version (`@v1.4.0`) or a
+needed). `@v1` is a rolling major tag that picks up fixes; pin to a full version (`@v1.4.1`) or a
 commit SHA if you would rather approve every change yourself.
 
 The scan writes its results into the workspace — SBOMs, an HTML report, `depproof-summary.md` — and
