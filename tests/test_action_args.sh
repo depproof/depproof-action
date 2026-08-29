@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests that an Action input actually reaches the engine's command line.
 #
-# CI already parses `action.yml` and runs `bash -n` over its 392 lines of embedded shell, which
+# CI already parses `action.yml` and runs `bash -n` over scan.sh, which
 # catches a broken heredoc or a typo. It cannot catch the failure that matters more: an input wired
 # to nothing. `ignore-scope: development` that never becomes `--ignore-scope development` produces a
 # build that fails when the user expected it to pass, with no error anywhere to explain why — the
@@ -37,7 +37,7 @@ check() { # check <name> <why-it-matters> <0|1 result>
 python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
 
 python3 - "$ROOT/action.yml" "$H/step.sh" "$H/env.sh" <<'PY'
-import re, sys, yaml
+import os, re, sys, yaml
 spec = yaml.safe_load(open(sys.argv[1]))
 step = spec["runs"]["steps"][0]
 
@@ -47,12 +47,22 @@ def sub(m):
         return "${IN_" + expr[len("inputs."):].strip().replace("-", "_").upper() + ":-}"
     return ""
 
-open(sys.argv[2], "w").write(re.sub(r"\$\{\{([^}]*)\}\}", sub, step["run"]))
+# The body lives in scan.sh, not inline -- see that file's header. The step's own `run:` is a
+# one-line invocation, so read the script instead, and refuse to run if action.yml stops invoking
+# it: silently testing one line while believing it tested four hundred is worse than failing.
+run = step["run"]
+if "scan.sh" not in run:
+    sys.exit("action.yml no longer invokes scan.sh -- this test extracts the wrong thing")
+import os
+body = open(os.path.join(os.path.dirname(sys.argv[1]), "scan.sh")).read()
+open(sys.argv[2], "w").write(re.sub(r"\$\{\{([^}]*)\}\}", sub, body))
 with open(sys.argv[3], "w") as f:
     for k, v in (step.get("env") or {}).items():
         m = re.match(r"\$\{\{\s*inputs\.([\w-]+)\s*\}\}", v) if isinstance(v, str) else None
         if m:
             f.write('export %s="${IN_%s:-}"\n' % (k, m.group(1).replace("-", "_").upper()))
+    # scan.sh reads ACTION_PATH; without it every helper path resolves to /scan.sh
+    f.write('export ACTION_PATH="%s"\n' % os.path.dirname(os.path.abspath(sys.argv[1])))
 PY
 
 mkdir -p "$H/bin" "$H/ws"

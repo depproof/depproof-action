@@ -66,6 +66,13 @@ jobs:
       - name: Action argument tests
         run: bash tests/test_action_args.sh
 
+      - name: Action template invariants
+        # Guards the action definition itself: a composite run: block that grows past GitHub's
+        # 21,000-character expression limit fails to compile for every consumer, before anything
+        # executes. No other test here would catch it -- they exercise what the action runs, not
+        # whether the action can load.
+        run: bash tests/test_action_template.sh
+
       - name: action.yml parses, and its shell is syntactically valid
         run: |
           # PyYAML ships in the ubuntu-latest image, but this check exists to catch a broken
