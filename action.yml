@@ -65,6 +65,22 @@ inputs:
   report-token:
     description: 'Ingest token for report-to (pass a secret). Forwarded to the engine only via $DEPPROOF_REPORT_TOKEN, never on the command line.'
     required: false
+  report-commit:
+    description: |
+      The commit the SCANNED code is at. Defaults to the commit that triggered the run
+      ($GITHUB_SHA), which is correct whenever you scan what triggered you.
+
+      Set it when your workflow checks out something else — a release tag, a pinned branch,
+      a submodule — because the Action cannot see that and would otherwise record provenance for
+      code it did not read. A hub row whose commit is not the tree that was scanned cannot be
+      reconciled against anything, and re-running an unchanged tree after the workflow file moves
+      looks like a new scan rather than the same one.
+    required: false
+  report-branch:
+    description: |
+      The branch or ref the scanned code is on. Defaults to $GITHUB_REF_NAME. Set it alongside
+      `report-commit` when you check out a different ref than the one that triggered the run.
+    required: false
   report-required:
     description: "If 'true', a failed upload fails the build (engine exit 3). Default: best-effort (warn only)."
     required: false
@@ -301,6 +317,8 @@ runs:
         # Secret via env (not script interpolation) so it never lands in a log or command line.
         DEPPROOF_REPORT_TOKEN: ${{ inputs.report-token }}
         INPUT_REPORT_TO: ${{ inputs.report-to }}
+        INPUT_REPORT_COMMIT: ${{ inputs.report-commit }}
+        INPUT_REPORT_BRANCH: ${{ inputs.report-branch }}
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
         INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
         INPUT_POLICY_ONLINE: ${{ inputs.policy-online }}

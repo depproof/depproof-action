@@ -97,8 +97,15 @@ fi
 # (engine stays headless); the token is forwarded via a valueless -e, never on argv.
 DOCKER_ENV=()
 if [ -n "${INPUT_REPORT_TO:-}" ]; then
+  # Provenance describes the code that was SCANNED, which is not always the code that triggered the
+  # run. $GITHUB_SHA is the triggering ref's head; a workflow that checks out a tag, a pinned branch
+  # or a submodule scans something else entirely, and the Action cannot see that from the outside.
+  # Reporting the wrong commit is quietly corrosive: the hub row cannot be reconciled against the
+  # tree it describes, and an unchanged tree re-scanned after the workflow file moves ingests as a
+  # NEW scan rather than updating the existing one, because ingest upserts on (org, repo, commit).
   ARGS+=("--report-to" "$INPUT_REPORT_TO" "--report-repo" "${GITHUB_REPOSITORY:-}" \
-         "--report-commit" "${GITHUB_SHA:-}" "--report-branch" "${GITHUB_REF_NAME:-}" \
+         "--report-commit" "${INPUT_REPORT_COMMIT:-${GITHUB_SHA:-}}" \
+         "--report-branch" "${INPUT_REPORT_BRANCH:-${GITHUB_REF_NAME:-}}" \
          "--report-event" "${GITHUB_EVENT_NAME:-}")
   [ "${INPUT_REPORT_REQUIRED:-false}" = "true" ] && ARGS+=("--report-required")
   DOCKER_ENV=("-e" "DEPPROOF_REPORT_TOKEN")

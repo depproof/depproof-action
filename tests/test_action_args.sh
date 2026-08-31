@@ -106,6 +106,31 @@ BASE=(IN_FAIL_ON=critical IN_DISCOVER=true IN_HTML=false IN_JOB_SUMMARY=false)
 
 echo "action args"
 
+# report-commit / report-branch — provenance for the code that was SCANNED.
+#
+# $GITHUB_SHA is the head of the ref that TRIGGERED the run. A workflow that checks out a tag, a
+# pinned branch or a submodule scans something else, and the Action cannot tell from the outside.
+# The failure is quiet in both directions: the hub row describes a tree that was never read, and
+# because ingest upserts on (org, repo, commit), an unchanged tree re-scanned after the workflow
+# file moves arrives as a NEW scan instead of updating the old one. A corpus pinned for
+# comparability then cannot be reconciled against its own published numbers.
+
+run "${BASE[@]}" IN_REPORT_TO=https://hub.example/api/v1/scans IN_REPORT_COMMIT=deadbeefcafe
+argv | grep -qx -- "deadbeefcafe"
+check "report-commit reaches the engine" \
+      "provenance silently describes the triggering ref instead of the scanned tree" $?
+
+run "${BASE[@]}" IN_REPORT_TO=https://hub.example/api/v1/scans IN_REPORT_BRANCH=depproof-pinned
+argv | grep -qx -- "depproof-pinned"
+check "report-branch reaches the engine" "same, for the ref name" $?
+
+# Unset must keep the existing behaviour exactly: this input is additive, and every consumer that
+# scans what triggered it must see no change at all.
+run "${BASE[@]}" IN_REPORT_TO=https://hub.example/api/v1/scans GITHUB_SHA=trigger-sha GITHUB_REF_NAME=trigger-ref
+argv | grep -qx -- "trigger-sha" && argv | grep -qx -- "trigger-ref"
+check "unset report-commit/branch still report the triggering ref" \
+      "these inputs are additive; defaulting elsewhere would change provenance for every existing consumer" $?
+
 run "${BASE[@]}" IN_IGNORE_SCOPE=development
 argv | grep -qx -- "--ignore-scope" && argv | grep -qx -- "development"
 check "ignore-scope reaches the engine" "the input is wired to nothing; the gate is never narrowed" $?
