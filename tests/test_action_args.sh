@@ -146,6 +146,35 @@ argv | grep -qx -- "development,optional"
 check "a comma-separated value survives as one argument" \
       "split across two argv entries the engine sees a stray positional and fails" $?
 
+# `usage-from` — the LOADED axis. Its failure mode is unique among the inputs here: a wrong PATH
+# produces a scan indistinguishable from one where the user never set the input at all. Every other
+# input in this file fails loudly at the engine; this one fails as silence, so the script validates
+# it before the container starts and these tests pin that it does.
+mkdir -p "$H/ws/traces" && echo "x" > "$H/ws/traces/trace-1.log"
+
+run "${BASE[@]}" IN_USAGE_FROM=traces
+argv | grep -qx -- "--usage-from" && argv | grep -qx -- "traces"
+check "usage-from reaches the engine" \
+      "the axis is silently off and the scan looks identical to one that never asked for it" $?
+
+run "${BASE[@]}"
+argv | grep -qx -- "--usage-from"
+[ $? -ne 0 ]
+check "an unset usage-from passes no flag" \
+      "the axis must cost nothing for the overwhelming majority who never enable it" $?
+
+run "${BASE[@]}" IN_USAGE_FROM=does-not-exist
+argv | grep -qx -- "--usage-from"
+[ $? -ne 0 ]
+check "a usage-from path that does not exist passes no flag" \
+      "the engine would find no trace and quietly report nothing, with no way to tell why" $?
+
+run "${BASE[@]}" IN_USAGE_FROM=/tmp/outside
+argv | grep -qx -- "--usage-from"
+[ $? -ne 0 ]
+check "an absolute usage-from path is refused" \
+      "the scan runs in a container with only the workspace mounted, so the path is not there" $?
+
 # `internal` — the failure here is the quietest of any input in this file. Wired to nothing, the
 # scan screens the caller's private libraries against a public registry, matches nothing, and reports
 # them CLEAN, which is indistinguishable from a genuinely clean result. No error, no warning, and a

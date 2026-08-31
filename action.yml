@@ -158,6 +158,45 @@ inputs:
       known-exploited finding with no fix is the most urgent one in the report.
     required: false
     default: 'false'
+  usage-from:
+    description: |
+      Path to a runtime trace from your own test run — the LOADED axis. Off unless you set it.
+
+      Answers "did this dependency ever load when your tests ran?", and annotates each component
+      with the answer. It is EVIDENCE, not a verdict:
+
+      * It can never fail your build. No exit code changes, no new gate, and no finding is
+        suppressed, filtered or hidden because of it. A build that passes today passes after you
+        set this; a build that fails today fails identically.
+      * "Not loaded" is NOT "not affected". The trace comes from your tests, which are not
+        production — a dependency used only on an error path or behind a feature flag will read as
+        never loaded and is still required.
+      * Almost every never-loaded dependency is transitive, so this cannot tell you to delete
+        anything. It tells you which findings to look at last.
+
+      Must be a path INSIDE the workspace: the scan runs in a container with your workspace
+      mounted, and a path outside it does not exist there.
+
+      Produce the trace by setting one environment variable on your existing test step:
+
+        - name: Test
+          env:
+            JAVA_TOOL_OPTIONS: -Xlog:class+load=info:file=traces/trace-%p.log   # JVM
+            # NODE_V8_COVERAGE: traces                                          # Node
+            # PYTHONPATH: .github/depproof                                      # Python (sitecustomize)
+          run: ./mvnw verify || true
+        - uses: depproof/depproof-action@v1
+          with:
+            usage-from: traces
+
+      The `%p` matters on the JVM and the equivalent matters everywhere: test runners fork, and a
+      single-file trace of a parallel suite silently holds one worker's view.
+
+      An unreadable or untrustworthy trace turns the axis OFF for that run rather than reporting
+      that nothing loaded. That direction is deliberate — reporting "never loaded" from a tracer
+      that failed to attach is how this kind of measurement gets someone breached.
+    required: false
+
   ignore-scope:
     description: |
       Dependency scopes whose findings cannot fail the build (comma-separated). Off by default.
@@ -347,6 +386,7 @@ runs:
         INPUT_FAIL_ON_KEV: ${{ inputs.fail-on-kev }}
         INPUT_FAIL_ON_EPSS: ${{ inputs.fail-on-epss }}
         INPUT_IGNORE_SCOPE: ${{ inputs.ignore-scope }}
+        INPUT_USAGE_FROM: ${{ inputs.usage-from }}
         INPUT_INTERNAL: ${{ inputs.internal }}
         INPUT_REQUIRE_FIDELITY: ${{ inputs.require-fidelity }}
         INPUT_JOB_SUMMARY: ${{ inputs.job-summary }}

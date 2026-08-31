@@ -71,6 +71,32 @@ fi
 # above: the engine owns glob validation, and a pattern silently dropped here would leave a
 # caller believing their internal libraries are declared when they are being screened
 # against a public registry and reported clean.
+# The LOADED axis. A side input: absent, nothing about this scan changes.
+#
+# Validated HERE rather than passed through blind, unlike --ignore-scope and --internal above,
+# because the failure is invisible at the other end. The scan runs in a container with the
+# workspace mounted at /workspace, so a path outside the workspace simply does not exist there:
+# the engine would find no trace, turn the axis off, and produce a scan that looks exactly like
+# one where the user never asked for it. A wrong scope word is a loud usage error; a wrong path
+# here is silence.
+if [ -n "${INPUT_USAGE_FROM}" ]; then
+  case "${INPUT_USAGE_FROM}" in
+    /*) echo "::warning::usage-from must be a path inside the workspace, not an absolute path" \
+             "(${INPUT_USAGE_FROM}). The scan runs in a container where that path does not exist;" \
+             "the usage axis is OFF for this run." ;;
+    *)
+      if [ -e "${GITHUB_WORKSPACE}/${INPUT_USAGE_FROM}" ]; then
+        ARGS+=("--usage-from" "${INPUT_USAGE_FROM}")
+      else
+        # Named explicitly, because "I set usage-from and got no usage output" is otherwise an
+        # unanswerable question. The most common cause by far is a test step that wrote no trace.
+        echo "::warning::usage-from path '${INPUT_USAGE_FROM}' does not exist in the workspace." \
+             "Did the test step run, and did it write the trace there? The usage axis is OFF" \
+             "for this run; the scan itself is unaffected."
+      fi
+      ;;
+  esac
+fi
 if [ -n "${INPUT_INTERNAL}" ]; then
   ARGS+=("--internal" "${INPUT_INTERNAL}")
 fi

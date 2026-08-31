@@ -384,6 +384,63 @@ depproof — gate: severity high or above, ignoring development dependencies
     package.json: CVE-2019-10744 critical cvss 9.1  :lodash:4.16.2 fix 4.17.12  [severity>=high]
 ```
 
+### Which dependencies actually loaded when your tests ran (`usage-from`)
+
+**Off unless you set it, and it can never fail your build.**
+
+A vulnerability in a dependency your code never even opens is not the same problem as one in the
+library handling every request. This annotates each component with whether it was ever *loaded*
+during your own test run, so you can order a triage queue by something better than severity alone.
+
+Set one environment variable on your existing test step, then point the action at the output:
+
+```yaml
+- name: Test
+  env:
+    JAVA_TOOL_OPTIONS: -Xlog:class+load=info:file=traces/trace-%p.log
+  run: ./mvnw verify || true      # a partial suite still yields a valid trace
+
+- uses: depproof/depproof-action@v1
+  with:
+    usage-from: traces
+```
+
+| ecosystem | what to set on your test step |
+|---|---|
+| JVM | `JAVA_TOOL_OPTIONS: -Xlog:class+load=info:file=traces/trace-%p.log` |
+| Node | `NODE_V8_COVERAGE: traces` |
+| Python | a `sitecustomize.py` on `PYTHONPATH` that writes loaded distributions at exit |
+
+The `%p` is not optional, and the same idea applies everywhere: **test runners fork.** A single
+trace file for a parallel suite silently holds one worker's view of the world, which reads as a
+great many dependencies that never loaded.
+
+#### Read the result correctly, because it is easy to over-read
+
+**"Not loaded" is not "not affected".** The evidence comes from your tests, and tests are not
+production. A dependency used only on an error path, behind a feature flag, or by a code path your
+suite skips will show as never loaded and is genuinely required.
+
+**It cannot tell you to delete anything.** Measured across three ecosystems, almost every
+never-loaded dependency is *transitive* — it arrives underneath something you did ask for, and is
+not yours to remove. On one Spring application, every single one was.
+
+**Which suite you run changes the answer more than you would expect.** The same application, on the
+same machine, differing only in whether its integration tests ran: **11.3%** never loaded with them,
+**22.0%** without — and *both runs reported 100% of their tests passing*. Nothing in a test report
+distinguishes those two runs, so the coverage behind the number is reported alongside it. Integration
+tests are worth far more here than unit tests, because booting a real application context loads what
+reflection and dependency injection wire, and that is exactly the population unit tests never touch.
+
+**It never suppresses a finding.** No exit code changes, no new gate flag, and nothing is filtered
+or hidden. Log4Shell was reached through a logged string with no call site in user code — a tool that
+filtered on this signal would have said "not affected" about it.
+
+If the trace is missing, unreadable, or fails its own consistency checks, the axis switches **off**
+for that run and says so. It does not report that nothing loaded. A tracer that failed to attach and
+a project whose dependencies genuinely never load produce identical empty files, and only one of
+those is good news.
+
 ### Your own packages on a private registry (`internal`)
 
 Most companies publish shared libraries to their own Nexus, Artifactory or package index. Those
