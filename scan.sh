@@ -97,10 +97,37 @@ if [ -n "${INPUT_USAGE_FROM}" ]; then
       ;;
   esac
 fi
+# The committed baseline. Same absolute-path trap as usage-from, and a worse failure mode if it is
+# missed: a baseline that silently does not load means the backlog fails the build again, and the
+# obvious conclusion is "the baseline does not work" rather than "the path was wrong".
+if [ -n "${INPUT_BASELINE}" ]; then
+  case "${INPUT_BASELINE}" in
+    /*) echo "::warning::baseline must be a path inside the workspace, not an absolute path" \
+             "(${INPUT_BASELINE}). The scan runs in a container where that path does not exist;" \
+             "the baseline is NOT applied and pre-existing findings will fail the build." ;;
+    *)
+      if [ -e "${GITHUB_WORKSPACE}/${INPUT_BASELINE}" ]; then
+        ARGS+=("--baseline" "${INPUT_BASELINE}")
+      else
+        echo "::warning::baseline file '${INPUT_BASELINE}' does not exist in the workspace." \
+             "It is NOT applied, so findings that predate it will fail the build. Did you commit" \
+             "the file produced by write-baseline?"
+      fi
+      ;;
+  esac
+fi
 if [ -n "${INPUT_INTERNAL}" ]; then
   ARGS+=("--internal" "${INPUT_INTERNAL}")
 fi
-ARGS+=("--output-dir" "/workspace/$(realpath --relative-to="$GITHUB_WORKSPACE" "$OUTPUT_DIR" 2>/dev/null || echo .)")
+OUTPUT_DIR_IN_CONTAINER="/workspace/$(realpath --relative-to="$GITHUB_WORKSPACE" "$OUTPUT_DIR" 2>/dev/null || echo .)"
+ARGS+=("--output-dir" "$OUTPUT_DIR_IN_CONTAINER")
+if [ "${INPUT_WRITE_BASELINE}" = "true" ]; then
+  # Beside the other artifacts, so the upload step the user already has carries it out. An
+  # ABSOLUTE container path, not a relative one: the container runs with -w /workspace, so a bare
+  # filename would land at the repository root instead and miss an upload scoped to output-dir.
+  # It suppresses nothing on the run that writes it.
+  ARGS+=("--write-baseline" "$OUTPUT_DIR_IN_CONTAINER/depproof-baseline.json")
+fi
 
 EXCLUDE="${INPUT_EXCLUDE}"
 if [ -n "$EXCLUDE" ]; then

@@ -339,6 +339,37 @@ inputs:
       build over.
     required: false
     default: 'auto'
+  baseline:
+    description: |
+      Path to a committed baseline file, relative to the workspace. Findings already in it do not
+      fail the build. Off unless you set it.
+
+      FOR ADOPTING THE GATE ON AN EXISTING REPOSITORY. The first run on a repository with a
+      backlog is red on code nobody touched that day, and every way out of that is bad: turn the
+      gate off, raise the threshold past the noise, or learn to ignore a red X. A baseline records
+      what was already there so the gate starts catching what is NEW.
+
+      Baselined findings are STILL REPORTED — in the summary, the SBOM, the PR comment and the
+      hub. Only the exit code is affected.
+
+      IT IS NOT A WAIVER. A waiver says "we assessed this and accept it", carries a reason and an
+      expiry, and exports to an auditor as that claim. A baseline says only "this was here before
+      we started looking". Do not use one for the other: an auditor reading a waiver register
+      full of unexamined findings is the failure this distinction exists to prevent.
+
+      To create one, run with `write-baseline: true` once, download depproof-baseline.json from
+      the run artifacts, and commit it. Review it like any other file.
+    required: false
+  write-baseline:
+    description: |
+      Write depproof-baseline.json alongside the other artifacts, then carry on with the scan
+      normally. Default: false.
+
+      A one-time step for adopting the gate: run it, download the file from the artifacts, commit
+      it, and set `baseline` to its path from then on. It does NOT suppress anything on the run
+      that writes it.
+    required: false
+    default: 'false'
   sarif:
     description: |
       Write depproof.sarif and upload it to GitHub code scanning, so findings appear in the
@@ -421,6 +452,8 @@ runs:
         INPUT_REQUIRE_FIDELITY: ${{ inputs.require-fidelity }}
         INPUT_JOB_SUMMARY: ${{ inputs.job-summary }}
         INPUT_PR_COMMENT: ${{ inputs.pr-comment }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_WRITE_BASELINE: ${{ inputs.write-baseline }}
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_SARIF_UPLOAD: ${{ inputs.sarif-upload }}
         ACTION_PATH: ${{ github.action_path }}

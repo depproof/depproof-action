@@ -262,6 +262,7 @@ After a successful run, depproof writes to the workspace (or `output-dir` if set
 |---|---|
 | `depproof-summary.json` | Combined results: per-manifest counts, vuln/license totals, fail/pass per manifest |
 | `depproof.sarif` | SARIF 2.1.0 for GitHub code scanning — written only with `sarif: true` |
+| `depproof-baseline.json` | The findings that existed at adoption — written only with `write-baseline: true`. Commit it, then set `baseline` to its path |
 | `depproof-summary.md` | The run-page/PR summary, written by the scanner. Present whenever `job-summary` or `pr-comment` is on. |
 | `depproof-sbom-<path>.json` | CycloneDX 1.6 SBOM for each scanned manifest. Slashes in path replaced with `--`. |
 | `depproof-report.html` | Human-readable report (vulnerabilities + dependencies + license policy). Self-contained — opens offline, no network or JS. On multi-manifest scans this is an index linking one `depproof-report-<path>.html` per manifest. Set `html: false` to skip. |
@@ -385,6 +386,49 @@ depproof — gate: severity high or above, ignoring development dependencies
   result:     FAIL — 8 finding(s) tripped the gate
     package.json: CVE-2019-10744 critical cvss 9.1  :lodash:4.16.2 fix 4.17.12  [severity>=high]
 ```
+
+### Adopting the gate on a repository that already has findings (`baseline`)
+
+**Off unless you set it.**
+
+Turn a gate on in an existing repository and the first run is red on code nobody touched that day.
+Every way out of that is bad: switch the gate off, raise the threshold past the noise, or learn to
+ignore a red X — and the last one is what actually happens.
+
+A baseline records what was already there, so the gate starts catching what is **new**.
+
+```yaml
+# once, to create the file
+- uses: depproof/depproof-action@v1
+  with:
+    write-baseline: true      # download depproof-baseline.json from the artifacts and commit it
+
+# from then on
+- uses: depproof/depproof-action@v1
+  with:
+    baseline: depproof-baseline.json
+```
+
+**Nothing is hidden.** Baselined findings still appear in the summary, the SBOM, the PR comment and
+the hub. Only the exit code is affected — and the run says so every time, pass or fail:
+
+```
+  baseline:   137 of 137 known finding(s) suppressed from the gate (written 2026-09-01, depproof 0.1.24)
+```
+
+**A new CVE against a dependency you never touched still fails the build.** The baseline records
+findings, not files, so "nobody edited anything" is not a defence — which is the whole point.
+
+#### This is not a waiver, and the difference matters
+
+| | |
+|---|---|
+| **waiver** | *"we assessed this and accept it"* — carries a reason, an owner and an expiry, and exports to your auditor as exactly that claim |
+| **baseline** | *"this was here before we started looking"* — no reason, no expiry, no VEX output |
+
+Bulk-waiving a backlog on day one would put hundreds of assessments into your compliance record that
+nobody performed. Use the baseline for the backlog, and waivers for the findings you have actually
+examined.
 
 ### Findings in the Security tab and on the diff (`sarif`)
 

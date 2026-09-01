@@ -146,6 +146,43 @@ argv | grep -qx -- "development,optional"
 check "a comma-separated value survives as one argument" \
       "split across two argv entries the engine sees a stray positional and fails" $?
 
+# `baseline` — the failure mode is worse than usage-from's. A baseline that silently does not load
+# means the backlog fails the build again, and the obvious conclusion is "baselines do not work"
+# rather than "the path was wrong", so the path handling is pinned here rather than trusted.
+mkdir -p "$H/ws" && : > "$H/ws/depproof-baseline.json"
+run "${BASE[@]}" IN_BASELINE=depproof-baseline.json
+argv | grep -qx -- "--baseline" && argv | grep -qx -- "depproof-baseline.json"
+check "baseline reaches the engine" \
+      "the backlog fails the build and the baseline looks broken when the path was simply wrong" $?
+
+run "${BASE[@]}"
+argv | grep -qx -- "--baseline"
+[ $? -ne 0 ]
+check "an unset baseline passes no flag" \
+      "suppressing anything a user did not ask to suppress is the one unforgivable direction" $?
+
+run "${BASE[@]}" IN_BASELINE=/etc/passwd
+argv | grep -qx -- "--baseline"
+[ $? -ne 0 ]
+check "an absolute baseline path is refused" \
+      "it does not exist inside the container, and applying nothing quietly is the failure" $?
+
+run "${BASE[@]}" IN_BASELINE=not-committed.json
+argv | grep -qx -- "--baseline"
+[ $? -ne 0 ]
+check "a baseline that is not in the workspace passes no flag" \
+      "a missing file must warn, never silently behave as an empty baseline" $?
+
+run "${BASE[@]}" IN_WRITE_BASELINE=true
+argv | grep -q -- "--write-baseline"
+check "write-baseline reaches the engine" \
+      "the one-time adoption step produces nothing and the user has no file to commit" $?
+
+run "${BASE[@]}" IN_WRITE_BASELINE=true
+argv | grep -A1 -- "--write-baseline" | grep -q "^/workspace/"
+check "write-baseline is an absolute container path" \
+      "-w /workspace means a bare filename lands at the repo root and misses the artifact upload" $?
+
 # `sarif` — the flag has to reach the engine, and must cost nothing when unset. The upload half is
 # not exercised here (it needs `gh` and a repository); what this pins is the half that silently
 # does nothing if it breaks: an input wired to no flag produces a run with no file to upload and no
