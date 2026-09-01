@@ -108,6 +108,9 @@ if [ -n "$EXCLUDE" ]; then
 fi
 
 # Emit the human-readable HTML report unless explicitly disabled.
+if [ "${INPUT_SARIF}" = "true" ]; then
+  ARGS+=("--sarif")
+fi
 if [ "${INPUT_HTML}" = "true" ]; then
   ARGS+=("--html")
 fi
@@ -451,6 +454,45 @@ if [ "${INPUT_PR_COMMENT}" != "false" ] && [ -n "$PR_NUM" ]; then
     fi
   fi
   rm -f "$BODY"
+fi
+
+# SARIF upload. Deliberately here, before the exit, and not as a second composite step: this runs
+# on a FAILING build too, and a failing build is when the alerts matter most. A step placed after
+# the scan would be skipped exactly then.
+#
+# Uploaded through the API rather than github/codeql-action/upload-sarif for the same reason the PR
+# comment is: a composite action cannot reliably swallow a failing step, so a missing permission
+# would fail somebody's build over an artifact. This warns instead, like the comment does.
+#
+# GITHUB_SHA and GITHUB_REF are already the right pair on both event types — on pull_request they
+# are the merge commit and refs/pull/N/merge, which is what code scanning wants for PR alerts.
+if [ "${INPUT_SARIF}" = "true" ] && [ "${INPUT_SARIF_UPLOAD}" != "false" ]; then
+  SARIF_FILE="${OUTPUT_DIR}/depproof.sarif"
+  if [ ! -f "$SARIF_FILE" ]; then
+    echo "::warning::depproof-action: sarif was requested but $SARIF_FILE was not written."
+  else
+    SARIF_PAYLOAD="$(mktemp)"
+    # Built as a file, not an argv string: the payload is gzipped+base64 SARIF and a large
+    # repository's easily runs past the command-line length limit.
+    if python3 - "$SARIF_FILE" "$GITHUB_SHA" "$GITHUB_REF" > "$SARIF_PAYLOAD" <<'PY'
+import base64, gzip, json, sys
+with open(sys.argv[1], "rb") as fh:
+    blob = base64.b64encode(gzip.compress(fh.read())).decode()
+json.dump({"commit_sha": sys.argv[2], "ref": sys.argv[3], "sarif": blob}, sys.stdout)
+PY
+    then
+      if gh api -X POST "repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
+           --input "$SARIF_PAYLOAD" >/dev/null 2>&1; then
+        echo "depproof-action: SARIF uploaded — findings are in the Security tab."
+      else
+        echo "::warning::depproof-action: could not upload SARIF — grant 'security-events: write'" \
+             "to enable it. depproof.sarif is still in the workspace."
+      fi
+    else
+      echo "::warning::depproof-action: could not package depproof.sarif for upload."
+    fi
+    rm -f "$SARIF_PAYLOAD"
+  fi
 fi
 
 exit $DEPPROOF_EXIT

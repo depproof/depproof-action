@@ -339,8 +339,38 @@ inputs:
       build over.
     required: false
     default: 'auto'
+  sarif:
+    description: |
+      Write depproof.sarif and upload it to GitHub code scanning, so findings appear in the
+      Security tab and on the pull-request diff instead of only in the job log. Default: false.
+
+      REQUIRES `security-events: write` on the job. Without it the upload is refused; the step
+      warns and your build is unaffected, exactly like the PR comment. The file is still written.
+
+      A DEGRADED SCAN NEVER PRODUCES AN EMPTY FILE. If a vulnerability source could not be
+      reached, a manifest could not be parsed, or the dependency graph could not be fully
+      resolved, those are uploaded as visible alerts saying so. An empty Security tab reads as an
+      assurance, and "we could not look" must never be shown as "there is nothing there".
+
+      Uploaded even when the gate FAILS the build — a red build is when the alerts matter most.
+
+          permissions:
+            security-events: write
+          steps:
+            - uses: depproof/depproof-action@v1
+              with:
+                sarif: true
+    required: false
+    default: 'false'
+  sarif-upload:
+    description: |
+      Set to 'false' to write depproof.sarif without uploading it — for teams that upload SARIF
+      from a separate job, or archive it as an artifact. Ignored unless `sarif` is true.
+      Default: true.
+    required: false
+    default: 'true'
   github-token:
-    description: 'Token used to post the PR comment. Defaults to the workflow token.'
+    description: 'Token used to post the PR comment, and to upload SARIF. Defaults to the workflow token.'
     required: false
     default: ${{ github.token }}
 
@@ -391,6 +421,8 @@ runs:
         INPUT_REQUIRE_FIDELITY: ${{ inputs.require-fidelity }}
         INPUT_JOB_SUMMARY: ${{ inputs.job-summary }}
         INPUT_PR_COMMENT: ${{ inputs.pr-comment }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_SARIF_UPLOAD: ${{ inputs.sarif-upload }}
         ACTION_PATH: ${{ github.action_path }}
       # The body lives in scan.sh, NOT inline. See the header there: a run: block with
       # expressions in it is compiled as one template expression and capped at 21,000

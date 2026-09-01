@@ -146,6 +146,27 @@ argv | grep -qx -- "development,optional"
 check "a comma-separated value survives as one argument" \
       "split across two argv entries the engine sees a stray positional and fails" $?
 
+# `sarif` — the flag has to reach the engine, and must cost nothing when unset. The upload half is
+# not exercised here (it needs `gh` and a repository); what this pins is the half that silently
+# does nothing if it breaks: an input wired to no flag produces a run with no file to upload and no
+# error anywhere, which looks exactly like a working scan.
+run "${BASE[@]}" IN_SARIF=true
+argv | grep -qx -- "--sarif"
+check "sarif reaches the engine" \
+      "no file is written, the upload finds nothing, and the Security tab stays empty" $?
+
+run "${BASE[@]}"
+argv | grep -qx -- "--sarif"
+[ $? -ne 0 ]
+check "an unset sarif passes no flag" \
+      "code scanning must stay opt-in — an upload needs a permission consumers have not granted" $?
+
+run "${BASE[@]}" IN_SARIF=false
+argv | grep -qx -- "--sarif"
+[ $? -ne 0 ]
+check "sarif=false passes no flag" \
+      "the documented default must actually be the behaviour" $?
+
 # `usage-from` — the LOADED axis. Its failure mode is unique among the inputs here: a wrong PATH
 # produces a scan indistinguishable from one where the user never set the input at all. Every other
 # input in this file fails loudly at the engine; this one fails as silence, so the script validates

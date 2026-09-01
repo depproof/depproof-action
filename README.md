@@ -249,9 +249,10 @@ Both surfaces render even when the scan fails, which is when they matter most.
 > same gate, same summary, posted as a merge request comment that updates in place. It is a worked
 > example to own and edit, and it fetches nothing at run time.
 >
-> **A note on GitHub's Security tab.** depproof does not upload SARIF yet, so findings do not appear
-> there. When it does, that surface will require GitHub Advanced Security on private repositories —
-> the two above deliberately do not.
+> **A note on GitHub's Security tab.** depproof writes SARIF and uploads it — set `sarif: true`, see
+> below. That surface requires GitHub Code Security (formerly Advanced Security) on **private**
+> repositories; it is free on public ones. The job summary and PR comment above deliberately require
+> neither, so they remain the paths that always work.
 
 ### Files
 
@@ -260,6 +261,7 @@ After a successful run, depproof writes to the workspace (or `output-dir` if set
 | File | Contents |
 |---|---|
 | `depproof-summary.json` | Combined results: per-manifest counts, vuln/license totals, fail/pass per manifest |
+| `depproof.sarif` | SARIF 2.1.0 for GitHub code scanning — written only with `sarif: true` |
 | `depproof-summary.md` | The run-page/PR summary, written by the scanner. Present whenever `job-summary` or `pr-comment` is on. |
 | `depproof-sbom-<path>.json` | CycloneDX 1.6 SBOM for each scanned manifest. Slashes in path replaced with `--`. |
 | `depproof-report.html` | Human-readable report (vulnerabilities + dependencies + license policy). Self-contained — opens offline, no network or JS. On multi-manifest scans this is an index linking one `depproof-report-<path>.html` per manifest. Set `html: false` to skip. |
@@ -383,6 +385,39 @@ depproof — gate: severity high or above, ignoring development dependencies
   result:     FAIL — 8 finding(s) tripped the gate
     package.json: CVE-2019-10744 critical cvss 9.1  :lodash:4.16.2 fix 4.17.12  [severity>=high]
 ```
+
+### Findings in the Security tab and on the diff (`sarif`)
+
+**Off unless you set it. Needs `security-events: write`.**
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+steps:
+  - uses: depproof/depproof-action@v1
+    with:
+      sarif: true
+```
+
+Findings appear as code scanning alerts — in the Security tab, and inline on the pull request. Set
+`sarif-upload: false` to write `depproof.sarif` without uploading it, if you upload from another job.
+
+**Requires GitHub Code Security on private repositories**; free on public ones. Without the
+permission the upload is refused, the step warns, and your build is unaffected — the file is still
+written to the workspace.
+
+#### Two things this does that most tools do not
+
+**A scan that could not look does not report "clean".** If a vulnerability source could not be
+reached, a manifest could not be parsed, or the dependency graph could not be fully resolved, those
+are uploaded as **visible alerts saying so**. An empty Security tab is read as an assurance, and a
+scan that never asked the question must not be shown as one that asked and found nothing.
+
+**One finding is one alert.** A package with one CVE in five modules is a single alert listing five
+locations, not five alerts. The count you see here matches the count everywhere else.
+
+Alerts are uploaded even when the gate **fails** the build, which is when they matter most.
 
 ### Which dependencies actually loaded when your tests ran (`usage-from`)
 
