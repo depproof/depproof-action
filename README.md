@@ -468,7 +468,7 @@ Alerts are uploaded even when the gate **fails** the build, which is when they m
 **Off unless you set it, and it can never fail your build.**
 
 A vulnerability in a dependency your code never even opens is not the same problem as one in the
-library handling every request. This annotates each component with whether it was ever *loaded*
+library handling every request. This annotates each package with whether it was ever *loaded*
 during your own test run, so you can order a triage queue by something better than severity alone.
 
 Set one environment variable on your existing test step, then point the action at the output:
