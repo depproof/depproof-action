@@ -97,6 +97,26 @@ if [ -n "${INPUT_USAGE_FROM}" ]; then
       ;;
   esac
 fi
+
+# behaviour-from — the BEHAVIOUR axis. Same rules as usage-from: a path INSIDE the workspace, evidence
+# only, and a wrong or empty path warns rather than failing the build. The recorder must have run in the
+# test step and written its output here.
+if [ -n "${INPUT_BEHAVIOUR_FROM}" ]; then
+  case "${INPUT_BEHAVIOUR_FROM}" in
+    /*) echo "::warning::behaviour-from must be a path inside the workspace, not an absolute path" \
+             "(${INPUT_BEHAVIOUR_FROM}). The scan runs in a container where that path does not exist;" \
+             "the BEHAVIOUR axis is OFF for this run." ;;
+    *)
+      if [ -e "${GITHUB_WORKSPACE}/${INPUT_BEHAVIOUR_FROM}" ]; then
+        ARGS+=("--behaviour-from" "${INPUT_BEHAVIOUR_FROM}")
+      else
+        echo "::warning::behaviour-from path '${INPUT_BEHAVIOUR_FROM}' does not exist in the workspace." \
+             "Did the test step run with the recorder, and did it write here? The BEHAVIOUR axis is OFF" \
+             "for this run; the scan itself is unaffected."
+      fi
+      ;;
+  esac
+fi
 # The committed baseline. Same absolute-path trap as usage-from, and a worse failure mode if it is
 # missed: a baseline that silently does not load means the backlog fails the build again, and the
 # obvious conclusion is "the baseline does not work" rather than "the path was wrong".

@@ -197,6 +197,29 @@ inputs:
       that failed to attach is how this kind of measurement gets someone breached.
     required: false
 
+  behaviour-from:
+    description: |
+      Path to a BEHAVIOUR recorder directory from your own test run — the BEHAVIOUR axis. Off unless
+      you set it, and it needs a hub to be useful.
+
+      Answers "what did this dependency DO while your tests ran?" — network, processes, file writes,
+      secret reads — and reports the facts for your hub to judge against the dependency's approved
+      record, flagging when a new version starts doing something new. Like the LOADED axis it is
+      EVIDENCE, never a verdict:
+
+      * It can never fail your build. No exit code changes, nothing suppressed. The hub decides what
+        is new; the scan only records facts.
+      * A capability the recorder could not observe on your runtime is reported "not analysed", never
+        "the dependency did not do it".
+      * Facts only leave your network: normalised host:port / file-area / config-key, never values,
+        full URLs or raw traces.
+
+      Must be a path INSIDE the workspace. Produce it by running the recorder in your existing test
+      step, appending it to your existing JAVA_TOOL_OPTIONS / NODE_OPTIONS / PYTHONPATH — never
+      replacing them — and writing to this directory.
+      A wrong or empty path turns the axis OFF for the run and warns; the scan is unaffected.
+    required: false
+
   ignore-scope:
     description: |
       Dependency scopes whose findings cannot fail the build (comma-separated). Off by default.
@@ -448,6 +471,7 @@ runs:
         INPUT_FAIL_ON_EPSS: ${{ inputs.fail-on-epss }}
         INPUT_IGNORE_SCOPE: ${{ inputs.ignore-scope }}
         INPUT_USAGE_FROM: ${{ inputs.usage-from }}
+        INPUT_BEHAVIOUR_FROM: ${{ inputs.behaviour-from }}
         INPUT_INTERNAL: ${{ inputs.internal }}
         INPUT_REQUIRE_FIDELITY: ${{ inputs.require-fidelity }}
         INPUT_JOB_SUMMARY: ${{ inputs.job-summary }}
