@@ -1,5 +1,5 @@
 name: 'depproof BEHAVIOUR setup'
-description: 'Places the BEHAVIOUR recorders for your test step. Evidence only: it can never fail your build.'
+description: 'Places the BEHAVIOUR recorders for your test step. Evidence: this step can never fail your build.'
 author: 'depproof'
 branding:
   icon: 'activity'

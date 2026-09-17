@@ -98,6 +98,19 @@ if [ -n "${INPUT_USAGE_FROM}" ]; then
   esac
 fi
 
+# fail-on-behaviour — the ONE way BEHAVIOUR can fail a build, off unless asked for. Only `alert` gates; anything
+# else (including the default) passes nothing to the engine, so the axis stays evidence.
+case "$(printf '%s' "${INPUT_FAIL_ON_BEHAVIOUR:-}" | tr '[:upper:]' '[:lower:]')" in
+  alert)
+    if [ -z "${INPUT_BEHAVIOUR_FROM:-}" ] || [ -z "${INPUT_REPORT_TO:-}" ]; then
+      echo "::warning::fail-on-behaviour needs behaviour-from and report-to (the hub decides what is new)." \
+           "Not gating on behaviour this run."
+    else
+      ARGS+=("--fail-on-behaviour" "alert")
+    fi
+    ;;
+esac
+
 # behaviour-from — the BEHAVIOUR axis. Same rules as usage-from: a path INSIDE the workspace, evidence
 # only, and a wrong or empty path warns rather than failing the build. The recorder must have run in the
 # test step and written its output here.

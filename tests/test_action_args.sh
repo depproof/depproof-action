@@ -204,6 +204,29 @@ argv | grep -qx -- "--sarif"
 check "sarif=false passes no flag" \
       "the documented default must actually be the behaviour" $?
 
+# `fail-on-behaviour` — the only way BEHAVIOUR can fail a build. Off by default, and it must NOT gate when the hub
+# or the trace is missing: the hub decides what is new, so without one there is nothing to gate on.
+run "${BASE[@]}" IN_BEHAVIOUR_FROM=traces IN_REPORT_TO=https://hub.example/api/v1/scans IN_FAIL_ON_BEHAVIOUR=alert
+argv | grep -qx -- "--fail-on-behaviour" && argv | grep -qx -- "alert"
+check "fail-on-behaviour=alert reaches the engine" \
+      "the gate a customer switched on would silently do nothing" $?
+
+run "${BASE[@]}" IN_BEHAVIOUR_FROM=traces IN_REPORT_TO=https://hub.example/api/v1/scans
+argv | grep -qx -- "--fail-on-behaviour"
+[ $? -ne 0 ]
+check "unset passes no flag" "BEHAVIOUR must stay evidence for everyone who did not ask" $?
+
+run "${BASE[@]}" IN_BEHAVIOUR_FROM=traces IN_REPORT_TO=https://hub.example/api/v1/scans IN_FAIL_ON_BEHAVIOUR=none
+argv | grep -qx -- "--fail-on-behaviour"
+[ $? -ne 0 ]
+check "none passes no flag" "a pipeline must be able to neutralise an inherited setting" $?
+
+run "${BASE[@]}" IN_BEHAVIOUR_FROM=traces IN_FAIL_ON_BEHAVIOUR=alert
+argv | grep -qx -- "--fail-on-behaviour"
+[ $? -ne 0 ]
+check "no hub, no gate" \
+      "a build would fail on evidence nothing could judge — the hub is what decides new" $?
+
 # `scanner-image` — which Scanner runs. Unset must stay exactly `:v0`, the tag every consumer pinned to @v1
 # relies on; set, it must be what runs, or a digest pin or an internal mirror is silently ignored.
 run "${BASE[@]}"

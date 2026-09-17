@@ -197,6 +197,21 @@ inputs:
       that failed to attach is how this kind of measurement gets someone breached.
     required: false
 
+  fail-on-behaviour:
+    description: |
+      Fail the build when your hub reports NEW behaviour. Off by default: 'alert' is the only value that gates,
+      'none' turns it off again (handy to neutralise a setting inherited from a shared workflow).
+
+      It can only fail on an ALERT — behaviour your hub judged new when a dependency's version changed, after
+      framework rows are folded and after any approval you have granted. It never fails because evidence is
+      missing: a recorder that could not attach, a capability your runtime cannot report, a first scan, or a hub
+      it could not reach all leave the build exactly as it was.
+
+      Needs `behaviour-from` and a hub (`report-to`), because the hub decides what is new. The way out of a red
+      build is the hub — accept the behaviour, or approve the pattern — not a change to this pipeline.
+    required: false
+    default: 'none'
+
   scanner-image:
     description: |
       The Scanner image to run. Default: ghcr.io/depproof/depproof:v0. Set it to pin a digest
@@ -215,8 +230,8 @@ inputs:
       record, flagging when a new version starts doing something new. Like the LOADED axis it is
       EVIDENCE, never a verdict:
 
-      * It can never fail your build. No exit code changes, nothing suppressed. The hub decides what
-        is new; the scan only records facts.
+      * It never fails your build unless you ask it to (`fail-on-behaviour: alert`, off by default). The hub
+        decides what is new; the scan records facts and reports them.
       * A capability the recorder could not observe on your runtime is reported "not analysed", never
         "the dependency did not do it".
       * Facts only leave your network: normalised host:port / file-area / config-key, never values,
@@ -481,6 +496,7 @@ runs:
         INPUT_USAGE_FROM: ${{ inputs.usage-from }}
         INPUT_BEHAVIOUR_FROM: ${{ inputs.behaviour-from }}
         INPUT_SCANNER_IMAGE: ${{ inputs.scanner-image }}
+        INPUT_FAIL_ON_BEHAVIOUR: ${{ inputs.fail-on-behaviour }}
         INPUT_INTERNAL: ${{ inputs.internal }}
         INPUT_REQUIRE_FIDELITY: ${{ inputs.require-fidelity }}
         INPUT_JOB_SUMMARY: ${{ inputs.job-summary }}
