@@ -22,6 +22,9 @@ jobs:
       - name: Coverage-annotation tests
         run: bash tests/test_coverage_annotation.sh
 
+      - name: BEHAVIOUR setup tests
+        run: bash tests/test_behaviour_setup.sh
+
       # The GitLab template carries its MR-comment script inline (a remote include fetches one file,
       # and a CI job that downloads code to execute is what this product warns about), so the test
       # extracts the heredoc and runs it against a stub API. It also checks the YAML parses and the
@@ -87,3 +90,18 @@ jobs:
           print(f"action.yml OK — {len(spec['inputs'])} inputs")
           PY
           bash -n /tmp/step.sh
+
+      - name: behaviour-setup/action.yml parses, its outputs are all written, and its script is valid
+        run: |
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet pyyaml
+          python3 - <<'PY'
+          import re, yaml
+          spec = yaml.safe_load(open("behaviour-setup/action.yml"))
+          script = open("scripts/behaviour_setup.sh").read()
+          # An output declared but never written reads as EMPTY — for the env outputs that silently replaces
+          # the customer's own JAVA_TOOL_OPTIONS. Every declared output must be emitted by the script.
+          missing = [o for o in spec["outputs"] if f'echo "{o}=' not in script]
+          assert not missing, f"outputs never written by behaviour_setup.sh: {missing}"
+          print(f"behaviour-setup OK — {len(spec['outputs'])} outputs, all written")
+          PY
+          bash -n scripts/behaviour_setup.sh

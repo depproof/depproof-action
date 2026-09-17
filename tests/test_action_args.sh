@@ -204,6 +204,18 @@ argv | grep -qx -- "--sarif"
 check "sarif=false passes no flag" \
       "the documented default must actually be the behaviour" $?
 
+# `scanner-image` — which Scanner runs. Unset must stay exactly `:v0`, the tag every consumer pinned to @v1
+# relies on; set, it must be what runs, or a digest pin or an internal mirror is silently ignored.
+run "${BASE[@]}"
+grep -q -- "ghcr.io/depproof/depproof:v0 " "$H/docker.args"
+check "an unset scanner-image runs ghcr.io/depproof/depproof:v0" \
+      "every existing consumer would silently change Scanner" $?
+
+run "${BASE[@]}" IN_SCANNER_IMAGE=registry.internal/mirror/depproof@sha256:abc123
+grep -q -- "registry.internal/mirror/depproof@sha256:abc123 " "$H/docker.args" && ! grep -q -- "depproof:v0" "$H/docker.args"
+check "scanner-image is exactly what runs" \
+      "a digest pin or an air-gapped mirror would be ignored and the public tag pulled instead" $?
+
 # `usage-from` — the LOADED axis. Its failure mode is unique among the inputs here: a wrong PATH
 # produces a scan indistinguishable from one where the user never set the input at all. Every other
 # input in this file fails loudly at the engine; this one fails as silence, so the script validates

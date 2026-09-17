@@ -1,0 +1,67 @@
+name: 'depproof BEHAVIOUR setup'
+description: 'Places the BEHAVIOUR recorders for your test step. Evidence only: it can never fail your build.'
+author: 'depproof'
+branding:
+  icon: 'activity'
+  color: 'blue'
+
+# Usage — set the outputs on YOUR TEST STEP only, never job-wide:
+#
+#   - id: behaviour
+#     uses: depproof/depproof-action/behaviour-setup@v1
+#   - name: Test
+#     run: ./mvnw verify
+#     env:
+#       DEPPROOF_BEHAVIOUR_DIR: ${{ steps.behaviour.outputs.dir }}
+#       JAVA_TOOL_OPTIONS: ${{ steps.behaviour.outputs.java-tool-options }}
+#       NODE_OPTIONS: ${{ steps.behaviour.outputs.node-options }}
+#       PYTHONPATH: ${{ steps.behaviour.outputs.pythonpath }}
+#   - uses: depproof/depproof-action@v1
+#     with:
+#       behaviour-from: ${{ steps.behaviour.outputs.from }}
+#
+# Why outputs and not a job-wide environment: exported for the rest of the job, the Node recorder would also
+# load inside every later JavaScript action (cache, upload-artifact), recording their traffic as if it were
+# yours and running in processes nobody asked it to watch. Scoped to the test step, it watches your tests.
+
+inputs:
+  scanner-image:
+    description: |
+      The Scanner image to copy the recorders from. Use the SAME value you give the scan step, so the
+      recorder your tests run under is the one that image's Scanner reads. Default: ghcr.io/depproof/depproof:v0.
+    required: false
+    default: ''
+  output:
+    description: 'Where the recorders write, relative to the workspace. Pass the `from` output to the scan step.'
+    required: false
+    default: '.depproof/behaviour'
+
+outputs:
+  enabled:
+    description: "'true' when the recorders were placed; 'false' otherwise (a warning says why)."
+    value: ${{ steps.setup.outputs.enabled }}
+  dir:
+    description: 'Absolute output directory for DEPPROOF_BEHAVIOUR_DIR; empty when not enabled (the recorders then do nothing).'
+    value: ${{ steps.setup.outputs.dir }}
+  from:
+    description: 'The workspace-relative directory to pass to the scan step as behaviour-from.'
+    value: ${{ steps.setup.outputs.from }}
+  java-tool-options:
+    description: 'Your existing JAVA_TOOL_OPTIONS with the agent appended — or unchanged when not enabled.'
+    value: ${{ steps.setup.outputs.java-tool-options }}
+  node-options:
+    description: 'Your existing NODE_OPTIONS with the recorder appended — or unchanged when not enabled.'
+    value: ${{ steps.setup.outputs.node-options }}
+  pythonpath:
+    description: 'Your existing PYTHONPATH with the recorder prepended — or unchanged when not enabled.'
+    value: ${{ steps.setup.outputs.pythonpath }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: setup
+      shell: bash
+      env:
+        INPUT_SCANNER_IMAGE: ${{ inputs.scanner-image }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+      run: bash "${{ github.action_path }}/../scripts/behaviour_setup.sh"

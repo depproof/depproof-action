@@ -197,6 +197,14 @@ inputs:
       that failed to attach is how this kind of measurement gets someone breached.
     required: false
 
+  scanner-image:
+    description: |
+      The Scanner image to run. Default: ghcr.io/depproof/depproof:v0. Set it to pin a digest
+      (ghcr.io/depproof/depproof@sha256:...), to pull from a mirror inside a proxied or air-gapped network,
+      or to try a pre-release. Whatever you set is exactly what runs, so pin by digest where you can.
+    required: false
+    default: ''
+
   behaviour-from:
     description: |
       Path to a BEHAVIOUR recorder directory from your own test run — the BEHAVIOUR axis. Off unless
@@ -214,9 +222,9 @@ inputs:
       * Facts only leave your network: normalised host:port / file-area / config-key, never values,
         full URLs or raw traces.
 
-      Must be a path INSIDE the workspace. Produce it by running the recorder in your existing test
-      step, appending it to your existing JAVA_TOOL_OPTIONS / NODE_OPTIONS / PYTHONPATH — never
-      replacing them — and writing to this directory.
+      Must be a path INSIDE the workspace. Produce it with the setup step, whose outputs you set on your
+      test step: depproof/depproof-action/behaviour-setup@v1 (its `from` output is this value). It appends
+      to your existing JAVA_TOOL_OPTIONS / NODE_OPTIONS / PYTHONPATH — never replacing them.
       A wrong or empty path turns the axis OFF for the run and warns; the scan is unaffected.
     required: false
 
@@ -472,6 +480,7 @@ runs:
         INPUT_IGNORE_SCOPE: ${{ inputs.ignore-scope }}
         INPUT_USAGE_FROM: ${{ inputs.usage-from }}
         INPUT_BEHAVIOUR_FROM: ${{ inputs.behaviour-from }}
+        INPUT_SCANNER_IMAGE: ${{ inputs.scanner-image }}
         INPUT_INTERNAL: ${{ inputs.internal }}
         INPUT_REQUIRE_FIDELITY: ${{ inputs.require-fidelity }}
         INPUT_JOB_SUMMARY: ${{ inputs.job-summary }}
