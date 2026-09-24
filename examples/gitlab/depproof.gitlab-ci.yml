@@ -29,7 +29,7 @@
 # The scan.
 # ---------------------------------------------------------------------------------------------
 .depproof:
-  image: ghcr.io/depproof/depproof:v0
+  image: ghcr.io/depproof/depproof:v1
   variables:
     DEPPROOF_FAIL_ON: "critical"
     DEPPROOF_REQUIRE_FIDELITY: ""
@@ -38,7 +38,7 @@
   script:
     # The image's ENTRYPOINT *is* the scanner, and GitLab replaces the entrypoint in order to run
     # this script — so the jar is invoked directly. This is the one line that differs from
-    # `docker run ghcr.io/depproof/depproof:v0 scan ...` anywhere else.
+    # `docker run ghcr.io/depproof/depproof:v1 scan ...` anywhere else.
     - |
       set -eu
       set -- scan --discover --root "$DEPPROOF_ROOT" --output-dir . --markdown \

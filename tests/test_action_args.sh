@@ -227,15 +227,16 @@ argv | grep -qx -- "--fail-on-behaviour"
 check "no hub, no gate" \
       "a build would fail on evidence nothing could judge — the hub is what decides new" $?
 
-# `scanner-image` — which Scanner runs. Unset must stay exactly `:v0`, the tag every consumer pinned to @v1
-# relies on; set, it must be what runs, or a digest pin or an internal mirror is silently ignored.
+# `scanner-image` — which Scanner runs. Unset must stay exactly `:v1`, because Action @v1 always runs Scanner
+# :v1 and every consumer relies on that; set, it must be what runs, or a digest pin or an internal mirror is
+# silently ignored.
 run "${BASE[@]}"
-grep -q -- "ghcr.io/depproof/depproof:v0 " "$H/docker.args"
-check "an unset scanner-image runs ghcr.io/depproof/depproof:v0" \
+grep -q -- "ghcr.io/depproof/depproof:v1 " "$H/docker.args"
+check "an unset scanner-image runs ghcr.io/depproof/depproof:v1" \
       "every existing consumer would silently change Scanner" $?
 
 run "${BASE[@]}" IN_SCANNER_IMAGE=registry.internal/mirror/depproof@sha256:abc123
-grep -q -- "registry.internal/mirror/depproof@sha256:abc123 " "$H/docker.args" && ! grep -q -- "depproof:v0" "$H/docker.args"
+grep -q -- "registry.internal/mirror/depproof@sha256:abc123 " "$H/docker.args" && ! grep -q -- "depproof:v1" "$H/docker.args"
 check "scanner-image is exactly what runs" \
       "a digest pin or an air-gapped mirror would be ignored and the public tag pulled instead" $?
 

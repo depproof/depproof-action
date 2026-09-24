@@ -28,7 +28,7 @@ inputs:
   scanner-image:
     description: |
       The Scanner image to copy the recorders from. Use the SAME value you give the scan step, so the
-      recorder your tests run under is the one that image's Scanner reads. Default: ghcr.io/depproof/depproof:v0.
+      recorder your tests run under is the one that image's Scanner reads. Default: ghcr.io/depproof/depproof:v1.
     required: false
     default: ''
   output:

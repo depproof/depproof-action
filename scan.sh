@@ -442,10 +442,10 @@ if [ -n "${INPUT_FAIL_ON_EPSS}" ]; then
   fi
 fi
 
-# Pull + run. The image is a multi-arch manifest at ghcr.io/depproof/depproof:v0 unless `scanner-image` says
+# Pull + run. The image is a multi-arch manifest at ghcr.io/depproof/depproof:v1 unless `scanner-image` says
 # otherwise (a digest pin, an internal mirror, a pre-release).
 SCANNER_IMAGE="${INPUT_SCANNER_IMAGE:-}"
-SCANNER_IMAGE="${SCANNER_IMAGE:-ghcr.io/depproof/depproof:v0}"
+SCANNER_IMAGE="${SCANNER_IMAGE:-ghcr.io/depproof/depproof:v1}"
 # `--rm` removes the container after exit. We mount the workspace read-write so SBOMs can
 # be written back; depproof doesn't modify the source itself.
 # The exit code is captured rather than allowed to propagate, because the surfaces below

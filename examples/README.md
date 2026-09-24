@@ -31,7 +31,7 @@ found.
 For any other CI — Jenkins, CircleCI, Buildkite — the whole job is one `docker run`:
 
 ```bash
-docker run --rm -v "$PWD":/workspace -w /workspace ghcr.io/depproof/depproof:v0 \
+docker run --rm -v "$PWD":/workspace -w /workspace ghcr.io/depproof/depproof:v1 \
   scan --discover --root /workspace --output-dir /workspace --markdown --fail-on critical
 ```
 

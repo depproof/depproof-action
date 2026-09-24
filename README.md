@@ -1,8 +1,8 @@
-# depproof — dependency vulnerability & license audit for Maven, Gradle, npm, Python & Go
+# depproof — dependency vulnerability & license audit for Maven, Gradle, npm, Python, Go & .NET
 
 Catch vulnerable and non-compliant dependencies in your pull request — the scan runs entirely inside your CI runner, and **your source and manifests never leave it**.
 
-depproof scans your Maven, Gradle, npm/pnpm/yarn, Python, and Go dependency manifests against [OSV.dev](https://osv.dev) for known vulnerabilities and public [SPDX](https://spdx.org/licenses/) license data for licensing, emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
+depproof scans your Maven, Gradle, npm/pnpm/yarn, Python, Go and .NET (NuGet) dependency manifests against [OSV.dev](https://osv.dev) for known vulnerabilities and public [SPDX](https://spdx.org/licenses/) license data for licensing, emits CycloneDX 1.6 SBOMs, and sets a pass/fail exit code that gates your PR.
 
 > 📖 **Full docs, guides & license explainers: [depproof.com](https://depproof.com).**
 
@@ -163,6 +163,7 @@ Auto-discovery finds these manifests anywhere in your repo:
 - `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `libs.versions.toml`, `dependencies.txt` (Gradle) — a `gradle.lockfile` or `dependencies.txt` gives the **exact** resolved graph; a bare build script is a best-effort read and dependencies whose versions come from a BOM or plugin may be missing entirely, so [produce one in a prior CI step](#getting-an-exact-gradle-graph)
 - `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
 - `poetry.lock`, `pdm.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` (Python) — resolved from the lockfile; a lockless `pyproject.toml` is a minimum-version fallback, so commit a lockfile (or generate one in a prior CI step) for an exact result
+- `packages.lock.json`, `*.csproj` / `*.fsproj` / `*.vbproj`, `packages.config` (.NET / NuGet) — a `packages.lock.json` is the **exact** resolved graph. Without one, run `dotnet restore` in a step **before** the scan: each project file then resolves exactly from the `obj/project.assets.json` that restore wrote. A project file with neither is a declared-only read of its direct `PackageReference`s
 - `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -deps -test -json ./...` on the runner for the **exact** resolved graph **including which modules only tests need** (written to `go.deps.json`, preferred over `go.mod`). If that fails — it type-checks, so a tree that does not build will — it falls back to `go list -m -json all`, which is still exact but carries no test/build split, and then to a static `go.mod` parse when `go` isn't on the runner
 
 And **skips** these directories (build output and vendored code — nothing to audit there):
@@ -489,6 +490,7 @@ Set one environment variable on your existing test step, then point the action a
 | JVM | `JAVA_TOOL_OPTIONS: -Xlog:class+load=info:file=traces/trace-%p.log` |
 | Node | `NODE_V8_COVERAGE: traces` |
 | Python | a `sitecustomize.py` on `PYTHONPATH` that writes loaded distributions at exit |
+| .NET | `DOTNET_STARTUP_HOOKS` set to the `DepproofLoaded.dll` shipped in the Scanner image at `/app/recorders/dotnet/` (the `behaviour-setup` step copies it to `.depproof/recorders/dotnet/`), and `DEPPROOF_LOADED_DIR: traces`. Verified on .NET 8 on Linux |
 
 The `%p` is not optional, and the same idea applies everywhere: **test runners fork.** A single
 trace file for a parallel suite silently holds one worker's view of the world, which reads as a

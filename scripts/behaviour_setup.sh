@@ -10,7 +10,7 @@
 set -uo pipefail
 
 IMAGE="${INPUT_SCANNER_IMAGE:-}"
-IMAGE="${IMAGE:-ghcr.io/depproof/depproof:v0}"
+IMAGE="${IMAGE:-ghcr.io/depproof/depproof:v1}"
 OUT_REL="${INPUT_OUTPUT:-.depproof/behaviour}"
 WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is not set}"
 GH_OUT="${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"

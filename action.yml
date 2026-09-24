@@ -1,5 +1,5 @@
-name: 'depproof — Maven, Gradle, npm, Python & Go Dependency & License Audit'
-description: 'Scan Maven, Gradle, npm/pnpm/yarn, Python & Go deps for vulnerabilities & license risk. Transitive resolution, CycloneDX SBOM, PR gate.'
+name: 'depproof — Maven, Gradle, npm, Python, Go & .NET Dependency & License Audit'
+description: 'Scan Maven, Gradle, npm/pnpm/yarn, Python, Go & .NET deps for vulnerabilities & license risk. Transitive resolution, CycloneDX SBOM, PR gate.'
 author: 'depproof'
 branding:
   icon: 'shield'
@@ -214,7 +214,7 @@ inputs:
 
   scanner-image:
     description: |
-      The Scanner image to run. Default: ghcr.io/depproof/depproof:v0. Set it to pin a digest
+      The Scanner image to run. Default: ghcr.io/depproof/depproof:v1. Set it to pin a digest
       (ghcr.io/depproof/depproof@sha256:...), to pull from a mirror inside a proxied or air-gapped network,
       or to try a pre-release. Whatever you set is exactly what runs, so pin by digest where you can.
     required: false
