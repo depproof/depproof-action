@@ -243,6 +243,19 @@ comment is never worth failing a build over. Set `pr-comment: false` to turn it 
 
 Both surfaces render even when the scan fails, which is when they matter most.
 
+**On Dependabot's pull requests** the comment says whether the bump is enough: each package row
+names the version that clears every advisory we hold (*"4.18.0 or later — clears all 2"*),
+so a bump that stops short is visible before it is merged. Two things to know, because GitHub runs
+Dependabot's pull requests with fewer rights than a person's:
+
+- **Keep `pull-requests: write`** in the workflow, as above. Without it there is no comment on those
+  pull requests, only the warning.
+- **If you report to a hub, add `DEPPROOF_HUB_TOKEN` as a Dependabot secret too** (Settings →
+  Secrets and variables → Dependabot), with the same value as the Actions secret. Dependabot's pull
+  requests cannot read Actions secrets. Without it, those runs skip the hub with a warning: nothing
+  is reported, and waivers decided in the hub are not applied, so the gate is stricter on them than
+  on everyone else's.
+
 > **The summary is produced by the scanner, not this action.** depproof writes
 > `depproof-summary.md` itself, so the same output is available in any CI. This action only puts it
 > where GitHub can show it. **On GitLab**, copy

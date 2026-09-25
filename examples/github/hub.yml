@@ -28,6 +28,8 @@ jobs:
         with:
           # ---- push the result ----
           report-to: https://hub.internal.example.com/api/v1/scans
+          # Store it as a Dependabot secret too (same name, same value): Dependabot's pull requests
+          # cannot read Actions secrets, and without it they skip the hub and its waivers.
           report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
           # Best-effort by default: a hub outage warns and the build carries on, because an
           # unreachable dashboard is not a security finding. Set this if an unrecorded scan is
