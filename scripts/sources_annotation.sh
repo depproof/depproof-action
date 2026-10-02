@@ -5,7 +5,7 @@
 # says "the findings are drawn from part of your graph". This says "the findings are drawn from no
 # screen at all" — the graph may be perfect and the count still means nothing, because the question
 # was never asked. A zero from a blocked source and a zero from a clean project are the same two
-# characters on the run page, and that is exactly what ADR-0013 exists to separate.
+# characters on the run page, and they must not read alike.
 #
 # `::error::` for a structural block, `::warning::` for a transient one, and the split is deliberate:
 # a proxy denying egress will still be denying it tomorrow, while a rate limit clears on its own.

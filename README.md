@@ -329,6 +329,33 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 }
 ```
 
+### Signed SBOMs, and keeping them with the release
+
+Requires Scanner 1.1 or later (the default `ghcr.io/depproof/depproof:v1` image once 1.1 is released).
+
+```yaml
+permissions:
+  contents: write          # only needed for release-sbom
+steps:
+  - uses: depproof/depproof-action@v1
+    with:
+      sbom-author: "Acme Platform Security"
+      sign-key: ${{ secrets.SBOM_SIGNING_KEY }}          # unencrypted PKCS#8 PEM
+      sign-public-key: ${{ vars.SBOM_SIGNING_PUBLIC_KEY }} # optional: embedded so anyone can verify
+      release-sbom: true                                  # on a tag build, attach the SBOMs to the release
+```
+
+- **`sbom-author`** names who produced the bill of materials. Without it the SBOM states the author is
+  unknown, because the Scanner cannot know who ran it.
+- **`sign-key`** signs every SBOM with your key (EC P-256/P-384, RSA or Ed25519) as a CycloneDX JSF
+  signature. The key is written to the runner's temporary directory, mounted read-only into the Scanner
+  and deleted after the scan; it never goes into the workspace or onto a command line.
+- **`release-sbom`** attaches the SBOM files to the GitHub release for the tag being built, so the signed
+  original travels with the release. Best-effort: a missing release or permission warns and never
+  changes the verdict.
+- On a **tag build** with `report-to` set, the Action also reports the tag to your hub, which keeps that
+  release's scan past retention and can produce its CycloneDX or SPDX later.
+
 ## CI gate
 
 The gate decides which findings turn a scan into a failed build. Rules are **OR-ed** — a finding

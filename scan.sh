@@ -197,6 +197,12 @@ if [ -n "${INPUT_REPORT_TO:-}" ]; then
          "--report-branch" "${INPUT_REPORT_BRANCH:-${GITHUB_REF_NAME:-}}" \
          "--report-event" "${GITHUB_EVENT_NAME:-}")
   [ "${INPUT_REPORT_REQUIRED:-false}" = "true" ] && ARGS+=("--report-required")
+  # The release this commit was built as, on a tag build only. The Scanner can read the CI's tag
+  # variable itself, but it runs in a container that does not see GITHUB_REF_TYPE, so it is passed
+  # here. A branch build sends none: a branch name is never reported as a release.
+  if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
+    ARGS+=("--report-tag" "${GITHUB_REF_NAME}")
+  fi
   DOCKER_ENV=("-e" "DEPPROOF_REPORT_TOKEN")
   if [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
     echo "::warning::depproof-action: report-to is set but report-token is empty — the hub upload will be skipped (set report-required: true to fail the build instead)."
@@ -258,7 +264,7 @@ if [ "${INPUT_GO_ONLINE:-true}" = "true" ]; then
   fi
 fi
 
-# Online-mode policy: fetch the org's gate policy from the hub (ADR-0002's reverse arrow) so
+# Online-mode policy: fetch the org's gate policy from the hub so
 # gating is authored once centrally rather than copy-pasted into every repository.
 #
 # FAIL-CLOSED, and the direction matters. If the fetch fails we apply NO org policy, and the
@@ -453,14 +459,55 @@ SCANNER_IMAGE="${SCANNER_IMAGE:-ghcr.io/depproof/depproof:v1}"
 # renders nothing, which is the exact situation this exists to fix. Re-raised verbatim at
 # the end, so exit codes 1/2/3/4 keep their distinct meanings.
 set +e
+# SBOM author and signing. The private key is written to the runner's temporary directory —
+# outside the workspace, so no later upload step can sweep it up — mounted read-only, and deleted as
+# soon as the scan returns.
+DOCKER_MOUNTS=()
+if [ -n "${INPUT_SBOM_AUTHOR:-}" ]; then
+  ARGS+=("--sbom-author" "${INPUT_SBOM_AUTHOR}")
+fi
+KEY_DIR=""
+if [ -n "${DEPPROOF_SIGN_KEY:-}" ] && ! KEY_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/depproof-keys.XXXXXX" 2>/dev/null)"; then
+  # Never fall back to writing the key somewhere else: no private directory, no signature.
+  KEY_DIR=""
+  echo "::warning::depproof-action: could not create a private directory for the signing key — the SBOM will not be signed."
+elif [ -n "${DEPPROOF_SIGN_KEY:-}" ]; then
+  ( umask 077; printf '%s\n' "${DEPPROOF_SIGN_KEY}" > "${KEY_DIR}/sign-key.pem" )
+  DOCKER_MOUNTS=("-v" "${KEY_DIR}:/run/depproof-keys:ro")
+  ARGS+=("--sign-key" "/run/depproof-keys/sign-key.pem")
+  if [ -n "${INPUT_SIGN_PUBLIC_KEY:-}" ]; then
+    printf '%s\n' "${INPUT_SIGN_PUBLIC_KEY}" > "${KEY_DIR}/sign-public-key.pem"
+    ARGS+=("--sign-public-key" "/run/depproof-keys/sign-public-key.pem")
+  fi
+elif [ -n "${INPUT_SIGN_PUBLIC_KEY:-}" ]; then
+  echo "::warning::depproof-action: sign-public-key is set without sign-key — the SBOM will not be signed."
+fi
+
 docker run --rm \
   "${DOCKER_ENV[@]}" \
+  "${DOCKER_MOUNTS[@]}" \
   -v "${GITHUB_WORKSPACE}":/workspace \
   -w /workspace \
   "${SCANNER_IMAGE}" \
   "${ARGS[@]}"
 DEPPROOF_EXIT=$?
 set -e
+[ -n "${KEY_DIR}" ] && rm -rf "${KEY_DIR}"
+
+# The original travels with the release: on a tag build, attach the SBOM files the scan
+# just wrote to the GitHub release for that tag. Best-effort — the verdict is already decided.
+if [ "${INPUT_RELEASE_SBOM:-false}" = "true" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
+  shopt -s nullglob
+  SBOM_FILES=("${OUTPUT_DIR}"/depproof-sbom*.json)
+  shopt -u nullglob
+  if [ "${#SBOM_FILES[@]}" -eq 0 ]; then
+    echo "::warning::depproof-action: release-sbom is set but the scan wrote no SBOM file to attach."
+  elif ! gh release upload "${GITHUB_REF_NAME}" "${SBOM_FILES[@]}" --clobber --repo "${GITHUB_REPOSITORY:-}" >/dev/null 2>&1; then
+    echo "::warning::depproof-action: could not attach the SBOM to release ${GITHUB_REF_NAME} (does the release exist, and does the job have contents: write?)."
+  else
+    echo "depproof-action: attached ${#SBOM_FILES[@]} SBOM file(s) to release ${GITHUB_REF_NAME}"
+  fi
+fi
 
 # ---------------------------------------------------------------------------------------
 # Visibility. Everything below is best-effort: a rendering or API problem must never change

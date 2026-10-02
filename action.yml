@@ -85,6 +85,33 @@ inputs:
     description: "If 'true', a failed upload fails the build (engine exit 3). Default: best-effort (warn only)."
     required: false
     default: 'false'
+  sbom-author:
+    description: |
+      Who produced the bill of materials: your organisation or team (CISA's "SBOM Author"). Written as
+      the document's author; without it the SBOM says the author is unknown. Needs Scanner 1.1 or later.
+    required: false
+    default: ''
+  sign-key:
+    description: |
+      A private key (unencrypted PKCS#8 PEM: EC P-256/P-384, RSA or Ed25519) to sign every SBOM with,
+      as a CycloneDX JSF signature. Pass it from a secret: `sign-key: ${{ secrets.SBOM_SIGNING_KEY }}`.
+      It is written to the runner's temporary directory, mounted read-only into the Scanner and deleted
+      after the scan — never into the workspace and never on a command line. Needs Scanner 1.1 or later.
+    required: false
+    default: ''
+  sign-public-key:
+    description: |
+      The matching public key (X.509 PEM), embedded in the signature so a reader can verify it without
+      asking you. Needs `sign-key`.
+    required: false
+    default: ''
+  release-sbom:
+    description: |
+      If 'true', on a tag build attach the (signed) SBOM files to the GitHub release for that tag, so the
+      original travels with the release. Needs `contents: write` on the job's token and an existing
+      release for the tag. Best-effort: a failed upload warns and never changes the scan's verdict.
+    required: false
+    default: 'false'
   enrich-online:
     description: |
       If 'true', apply exploitation data from your self-hosted hub at scan time, so it reaches the
@@ -466,6 +493,11 @@ runs:
         INPUT_REPORT_COMMIT: ${{ inputs.report-commit }}
         INPUT_REPORT_BRANCH: ${{ inputs.report-branch }}
         INPUT_REPORT_REQUIRED: ${{ inputs.report-required }}
+        INPUT_SBOM_AUTHOR: ${{ inputs.sbom-author }}
+        # Secret via env, like the report token: never interpolated into the script or a command line.
+        DEPPROOF_SIGN_KEY: ${{ inputs.sign-key }}
+        INPUT_SIGN_PUBLIC_KEY: ${{ inputs.sign-public-key }}
+        INPUT_RELEASE_SBOM: ${{ inputs.release-sbom }}
         INPUT_WAIVERS_ONLINE: ${{ inputs.waivers-online }}
         INPUT_POLICY_ONLINE: ${{ inputs.policy-online }}
         INPUT_REQUIRE_ENRICHMENT: ${{ inputs.require-enrichment }}

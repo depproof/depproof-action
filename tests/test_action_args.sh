@@ -91,6 +91,7 @@ run() { # run <IN_VAR=value>... ; leaves the engine's argv in $H/docker.args
       for kv in "$@"; do export "${kv?}"; done
       # shellcheck disable=SC1090
       . "$H/env.sh"; bash "$H/step.sh" ) > "$H/run.log" 2>&1
+    echo $? > "$H/exit.txt"
   else
     local envs=(); for kv in "$@"; do envs+=(-e "$kv"); done
     docker run --rm -v "$H:/h" \
@@ -98,6 +99,7 @@ run() { # run <IN_VAR=value>... ; leaves the engine's argv in $H/docker.args
       -e GITHUB_STEP_SUMMARY=/h/summary.md -e GITHUB_OUTPUT=/h/out.txt -e GITHUB_ENV=/h/env.txt \
       "${envs[@]}" bash:5 \
       bash -c 'export PATH=/h/bin:$PATH; . /h/env.sh; bash /h/step.sh' > "$H/run.log" 2>&1
+    echo $? > "$H/exit.txt"
   fi
 }
 
@@ -310,6 +312,72 @@ run "${BASE[@]}" IN_FAIL_ONLY_IF_FIX_AVAILABLE=false
 argv | grep -qx -- "--fail-only-if-fix-available"
 [ $? -ne 0 ]
 check "a false boolean passes no flag" "'false' as a string is truthy in shell if tested carelessly" $?
+
+# ---- release tag, SBOM author and signing, release SBOM ------------------------------------------
+#
+# The Scanner runs in a container that does not see GITHUB_REF_TYPE, so on a tag build the Action
+# must pass the tag itself — and on a branch build it must not, or a branch name is filed as a release.
+
+run "${BASE[@]}" IN_REPORT_TO=https://hub.example/api/v1/scans GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v2.3.0
+argv | grep -qx -- "--report-tag" && argv | grep -qx -- "v2.3.0"
+check "a tag build reports its release tag" "the hub never learns which scan is a release" $?
+
+run "${BASE[@]}" IN_REPORT_TO=https://hub.example/api/v1/scans GITHUB_REF_TYPE=branch GITHUB_REF_NAME=main
+argv | grep -qx -- "--report-tag"
+[ $? -ne 0 ]
+check "a branch build reports no release tag" "a branch name would be filed as a release" $?
+
+run "${BASE[@]}" IN_SBOM_AUTHOR=Acme
+argv | grep -qx -- "--sbom-author" && argv | grep -qx -- "Acme"
+check "sbom-author reaches the engine" "the SBOM says its author is unknown" $?
+
+KEYPEM=$'-----BEGIN PRIVATE KEY-----\nSECRETKEYMATERIAL\n-----END PRIVATE KEY-----'
+mkdir -p "$H/rt"
+# RUNNER_TEMP as the step sees it: the host path, or the same directory mounted at /h in bash:5.
+RT="$H/rt"; [ "$host_ok" -eq 1 ] || RT="/h/rt"
+run "${BASE[@]}" IN_SIGN_KEY="$KEYPEM" RUNNER_TEMP="$RT"
+argv | grep -qx -- "--sign-key" && argv | grep -qx -- "/run/depproof-keys/sign-key.pem" && grep -q ":/run/depproof-keys:ro" "$H/docker.args"
+check "sign-key is mounted read-only and passed by path" "the SBOM is not signed" $?
+grep -q "SECRETKEYMATERIAL" "$H/docker.args" "$H/run.log"
+[ $? -ne 0 ]
+check "the private key never appears on the command line or in the log" "a signing key leaks into CI logs" $?
+[ -z "$(ls -A "$H/rt" 2>/dev/null)" ]
+check "the key file is deleted after the scan" "a private key is left on the runner" $?
+[ -z "$(find "$H/ws" -name 'sign-key.pem' 2>/dev/null)" ]
+check "the key is never written into the workspace" "a later upload step could publish the key" $?
+
+run "${BASE[@]}" IN_SIGN_KEY="$KEYPEM" RUNNER_TEMP="/nonexistent/runner-temp"
+argv | grep -qx -- "--sign-key"
+[ $? -ne 0 ] && grep -q "will not be signed" "$H/run.log"
+check "no private directory means no signing, never a key written elsewhere" "the key lands in a shared path" $?
+
+# Written beside the docker log, wherever the step runs (host, or /h in bash:5).
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$(dirname "$DOCKER_ARGS_FILE")/gh.args"\nexit 0\n' > "$H/bin/gh"; chmod +x "$H/bin/gh"
+touch "$H/ws/depproof-sbom.json"
+: > "$H/gh.args"
+run "${BASE[@]}" IN_RELEASE_SBOM=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v2.3.0 GITHUB_REPOSITORY=acme/api
+grep -q "release upload v2.3.0" "$H/gh.args" && grep -q "depproof-sbom.json" "$H/gh.args"
+check "release-sbom attaches the SBOM to the tag's release" "the original does not travel with the release" $?
+: > "$H/gh.args"
+run "${BASE[@]}" IN_RELEASE_SBOM=true GITHUB_REF_TYPE=branch GITHUB_REF_NAME=main
+[ ! -s "$H/gh.args" ] || ! grep -q "release upload" "$H/gh.args"
+check "release-sbom uploads nothing on a branch build" "a branch build would try to publish to a release" $?
+
+# Failure paths: attaching the SBOM is best-effort and must never change the scan's result.
+: > "$H/gh.args"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$(dirname "$DOCKER_ARGS_FILE")/gh.args"\nexit 1\n' > "$H/bin/gh"; chmod +x "$H/bin/gh"
+run "${BASE[@]}" IN_RELEASE_SBOM=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v2.3.0 GITHUB_REPOSITORY=acme/api
+grep -q "could not attach the SBOM to release v2.3.0" "$H/run.log" && [ "$(cat "$H/exit.txt")" = "0" ]
+check "a failed release upload warns and leaves the scan's result alone" "a GitHub permission would fail a clean build" $?
+
+rm -f "$H/ws"/depproof-sbom*.json
+run "${BASE[@]}" IN_RELEASE_SBOM=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v2.3.0
+grep -q "wrote no SBOM file to attach" "$H/run.log" && [ "$(cat "$H/exit.txt")" = "0" ]
+check "release-sbom with no SBOM file warns instead of failing" "a missing file would fail the build" $?
+
+run "${BASE[@]}" IN_SIGN_PUBLIC_KEY=$'-----BEGIN PUBLIC KEY-----\nX\n-----END PUBLIC KEY-----'
+grep -q "sign-public-key is set without sign-key" "$H/run.log" && ! argv | grep -qx -- "--sign-public-key"
+check "a public key without a private key warns and passes neither" "the Scanner would refuse the flag and fail the scan" $?
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

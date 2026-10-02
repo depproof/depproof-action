@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for scripts/summary_body.sh.
 #
-# Almost all of the display logic moved into the engine with the summary itself (ADR-0006, amended),
+# Almost all of the display logic moved into the engine with the summary itself,
 # where the gate decision lives and where it benefits every CI rather than this one. What is left
 # here is the part the engine cannot cover: what this Action does when the engine produced no summary
 # at all.
