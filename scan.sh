@@ -87,6 +87,7 @@ if [ -n "${INPUT_USAGE_FROM}" ]; then
     *)
       if [ -e "${GITHUB_WORKSPACE}/${INPUT_USAGE_FROM}" ]; then
         ARGS+=("--usage-from" "${INPUT_USAGE_FROM}")
+        USAGE_ON=1
       else
         # Named explicitly, because "I set usage-from and got no usage output" is otherwise an
         # unanswerable question. The most common cause by far is a test step that wrote no trace.
@@ -96,6 +97,41 @@ if [ -n "${INPUT_USAGE_FROM}" ]; then
       fi
       ;;
   esac
+fi
+
+# usage-tests and usage-run describe the trace above, so they mean nothing without it: passed only when
+# usage-from was accepted. Both are evidence, like the trace — neither can change the verdict.
+#
+# usage-tests: the JUnit XML reports (a file or a directory) from the SAME test run, so the LOADED coverage
+# line can say how much of the suite ran instead of "tests=unknown". Same path rules as usage-from: inside
+# the workspace, and a wrong path warns rather than fails.
+if [ -n "${INPUT_USAGE_TESTS:-}" ]; then
+  if [ "${USAGE_ON:-0}" != "1" ]; then
+    echo "::warning::usage-tests has no effect without a usable usage-from trace; ignored for this run."
+  else
+    case "${INPUT_USAGE_TESTS}" in
+      /*) echo "::warning::usage-tests must be a path inside the workspace, not an absolute path" \
+               "(${INPUT_USAGE_TESTS}). Test counts stay unknown for this run." ;;
+      *)
+        if [ -e "${GITHUB_WORKSPACE}/${INPUT_USAGE_TESTS}" ]; then
+          ARGS+=("--usage-tests" "${INPUT_USAGE_TESTS}")
+        else
+          echo "::warning::usage-tests path '${INPUT_USAGE_TESTS}' does not exist in the workspace." \
+               "Did the test step write JUnit XML there? Test counts stay unknown for this run."
+        fi
+        ;;
+    esac
+  fi
+fi
+# usage-run: what produced the trace — 'tests' (the default) or 'startup' for a repository with no test
+# suite, where the app was started and stopped with the recorder on. Passed through verbatim so the
+# Scanner rejects an unknown value loudly rather than this script dropping it quietly.
+if [ -n "${INPUT_USAGE_RUN:-}" ]; then
+  if [ "${USAGE_ON:-0}" = "1" ]; then
+    ARGS+=("--usage-run" "${INPUT_USAGE_RUN}")
+  else
+    echo "::warning::usage-run has no effect without a usable usage-from trace; ignored for this run."
+  fi
 fi
 
 # fail-on-behaviour — the ONE way BEHAVIOUR can fail a build, off unless asked for. Only `alert` gates; anything
@@ -182,9 +218,16 @@ if [ "${INPUT_JOB_SUMMARY}" = "true" ] || [ "${INPUT_PR_COMMENT}" != "false" ]; 
   ARGS+=("--markdown")
 fi
 
+# The CI run this scan belongs to. The Scanner records which run, attempt, job and workflow produced the
+# scan, so a hub can tell a re-run from a new run, keep every job's manifests for a commit rather than the
+# last one's, and combine proof from test shards. The container does not inherit the runner's environment,
+# so each identifier is passed by NAME with a valueless -e: docker copies the runner's value, an unset one
+# stays unset, and nothing reaches argv. Identifiers only — never a token, URL or other value. Passed on
+# every run, hub or not, because the summary JSON carries them too.
+DOCKER_ENV=("-e" "GITHUB_ACTIONS" "-e" "GITHUB_RUN_ID" "-e" "GITHUB_RUN_ATTEMPT" "-e" "GITHUB_JOB" "-e" "GITHUB_WORKFLOW_REF")
+
 # Optional push to a self-hosted depproof-hub. Metadata comes from the GitHub context
 # (engine stays headless); the token is forwarded via a valueless -e, never on argv.
-DOCKER_ENV=()
 if [ -n "${INPUT_REPORT_TO:-}" ]; then
   # Provenance describes the code that was SCANNED, which is not always the code that triggered the
   # run. $GITHUB_SHA is the triggering ref's head; a workflow that checks out a tag, a pinned branch
@@ -203,7 +246,7 @@ if [ -n "${INPUT_REPORT_TO:-}" ]; then
   if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ -n "${GITHUB_REF_NAME:-}" ]; then
     ARGS+=("--report-tag" "${GITHUB_REF_NAME}")
   fi
-  DOCKER_ENV=("-e" "DEPPROOF_REPORT_TOKEN")
+  DOCKER_ENV+=("-e" "DEPPROOF_REPORT_TOKEN")
   if [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
     echo "::warning::depproof-action: report-to is set but report-token is empty — the hub upload will be skipped (set report-required: true to fail the build instead)."
   fi

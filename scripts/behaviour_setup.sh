@@ -12,10 +12,12 @@ set -uo pipefail
 IMAGE="${INPUT_SCANNER_IMAGE:-}"
 IMAGE="${IMAGE:-ghcr.io/depproof/depproof:v1}"
 OUT_REL="${INPUT_OUTPUT:-.depproof/behaviour}"
+# .NET LOADED writes beside, not into, the BEHAVIOUR output: it is a LOADED trace, read by `usage-from`.
+LOADED_REL=".depproof/loaded"
 WS="${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is not set}"
 GH_OUT="${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"
 
-emit() { # emit <enabled> <dir> <java> <node> <pythonpath>
+emit() { # emit <enabled> <dir> <java> <node> <pythonpath> <dotnet-startup-hooks> <loaded-dir> <javaagent>
   {
     echo "enabled=$1"
     echo "dir=$2"
@@ -23,11 +25,15 @@ emit() { # emit <enabled> <dir> <java> <node> <pythonpath>
     echo "java-tool-options=$3"
     echo "node-options=$4"
     echo "pythonpath=$5"
+    echo "dotnet-startup-hooks=$6"
+    echo "loaded-dir=$7"
+    echo "loaded-from=$LOADED_REL"
+    echo "javaagent=$8"
   } >> "$GH_OUT"
 }
 off() { # off <reason>
   echo "::warning::depproof BEHAVIOUR setup: $1 BEHAVIOUR is off for this run; your tests run exactly as they would without it."
-  emit false "" "${JAVA_TOOL_OPTIONS:-}" "${NODE_OPTIONS:-}" "${PYTHONPATH:-}"
+  emit false "" "${JAVA_TOOL_OPTIONS:-}" "${NODE_OPTIONS:-}" "${PYTHONPATH:-}" "${DOTNET_STARTUP_HOOKS:-}" "" ""
   exit 0
 }
 
@@ -54,9 +60,24 @@ if [ -d "$WS/.git/info" ] && ! grep -qx '.depproof/' "$WS/.git/info/exclude" 2>/
   echo '.depproof/' >> "$WS/.git/info/exclude"
 fi
 
+# .NET LOADED: a startup hook, inert unless DEPPROOF_LOADED_DIR is set. Optional on its own: an image without
+# it (or a directory that cannot be made) leaves .NET off — the existing DOTNET_STARTUP_HOOKS passed through and
+# loaded-dir empty — while BEHAVIOUR for the other runtimes stays on.
+DOTNET_HOOKS="${DOTNET_STARTUP_HOOKS:-}"
+LOADED_DIR=""
+if [ -f "$REC/dotnet/DepproofLoaded.dll" ] && mkdir -p "$WS/$LOADED_REL" 2>/dev/null; then
+  # The runtime splits DOTNET_STARTUP_HOOKS on the path separator, ':' on Linux. Appended, never replacing.
+  DOTNET_HOOKS="${DOTNET_STARTUP_HOOKS:+$DOTNET_STARTUP_HOOKS:}$REC/dotnet/DepproofLoaded.dll"
+  LOADED_DIR="$WS/$LOADED_REL"
+else
+  echo "depproof BEHAVIOUR: $IMAGE carries no .NET LOADED recorder; .NET LOADED is off (BEHAVIOUR is unaffected)."
+fi
+
 # APPEND, never replace: whatever the job already set keeps working.
 emit true "$OUT" \
   "${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-javaagent:$REC/java/behaviour-agent.jar" \
   "${NODE_OPTIONS:+$NODE_OPTIONS }--require $REC/node/behaviour.cjs" \
-  "$REC/python${PYTHONPATH:+:$PYTHONPATH}"
+  "$REC/python${PYTHONPATH:+:$PYTHONPATH}" \
+  "$DOTNET_HOOKS" "$LOADED_DIR" \
+  "-javaagent:$REC/java/behaviour-agent.jar"
 echo "depproof BEHAVIOUR: recorders from $IMAGE placed in .depproof/recorders; set the outputs on your test step."

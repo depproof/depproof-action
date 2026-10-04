@@ -20,6 +20,15 @@ branding:
 #     with:
 #       behaviour-from: ${{ steps.behaviour.outputs.from }}
 #
+# .NET (LOADED only — which assemblies loaded, not what they did) on a `dotnet test` step for .NET 6 or later:
+#
+#     env:
+#       DOTNET_STARTUP_HOOKS: ${{ steps.behaviour.outputs.dotnet-startup-hooks }}
+#       DEPPROOF_LOADED_DIR: ${{ steps.behaviour.outputs.loaded-dir }}
+#   ...
+#     with:
+#       usage-from: ${{ steps.behaviour.outputs.loaded-from }}
+#
 # Why outputs and not a job-wide environment: exported for the rest of the job, the Node recorder would also
 # load inside every later JavaScript action (cache, upload-artifact), recording their traffic as if it were
 # yours and running in processes nobody asked it to watch. Scoped to the test step, it watches your tests.
@@ -49,12 +58,28 @@ outputs:
   java-tool-options:
     description: 'Your existing JAVA_TOOL_OPTIONS with the agent appended — or unchanged when not enabled.'
     value: ${{ steps.setup.outputs.java-tool-options }}
+  javaagent:
+    description: |
+      The agent flag alone (`-javaagent:<path>`), for a build tool's own JVM: add it to MAVEN_OPTS or to
+      org.gradle.jvmargs so Maven and Gradle plugins are seen. EMPTY when not enabled, so adding it is safe either way.
+    value: ${{ steps.setup.outputs.javaagent }}
   node-options:
     description: 'Your existing NODE_OPTIONS with the recorder appended — or unchanged when not enabled.'
     value: ${{ steps.setup.outputs.node-options }}
   pythonpath:
     description: 'Your existing PYTHONPATH with the recorder prepended — or unchanged when not enabled.'
     value: ${{ steps.setup.outputs.pythonpath }}
+  dotnet-startup-hooks:
+    description: |
+      Your existing DOTNET_STARTUP_HOOKS with the .NET LOADED hook appended — or unchanged when not enabled.
+      Set it only on a test step that runs .NET 6 or later; .NET Framework has no startup hooks.
+    value: ${{ steps.setup.outputs.dotnet-startup-hooks }}
+  loaded-dir:
+    description: 'Absolute output directory for DEPPROOF_LOADED_DIR (.NET LOADED); empty when not enabled (the hook then does nothing).'
+    value: ${{ steps.setup.outputs.loaded-dir }}
+  loaded-from:
+    description: 'The workspace-relative .NET LOADED directory to pass to the scan step as usage-from.'
+    value: ${{ steps.setup.outputs.loaded-from }}
 
 runs:
   using: 'composite'

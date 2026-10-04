@@ -224,6 +224,34 @@ inputs:
       that failed to attach is how this kind of measurement gets someone breached.
     required: false
 
+  usage-tests:
+    description: |
+      Path to the JUnit XML reports (a file or a directory) written by the SAME test run as
+      `usage-from`. Off unless you set it; ignored without `usage-from`.
+
+      The LOADED result carries a coverage line saying how much of the suite ran, because a suite that
+      stopped half-way under-counts what loaded. Without this the line says `tests=unknown` — true,
+      rather than a number made up. With it, the line reads the passed/run counts from your reports.
+
+      Surefire/Failsafe (`target/surefire-reports`), Gradle (`build/test-results`), pytest
+      `--junitxml`, jest-junit and the .NET JUnit logger all write it. Must be a path INSIDE the
+      workspace; a wrong path warns and the counts stay unknown. Evidence only: it never changes the
+      verdict.
+    required: false
+
+  usage-run:
+    description: |
+      What produced the `usage-from` trace: 'tests' (the default) or 'startup'. Ignored without
+      `usage-from`.
+
+      'startup' is for a repository with no test suite: start the application with the recorder on,
+      wait until it is ready, stop it, and point `usage-from` at what it wrote. A package that loaded
+      is full evidence. A package that did not is reported as "not loaded at startup" — shown, never
+      used to demote a finding, never in place of a test result. See "Proof for a repository with no
+      tests" in the README.
+    required: false
+    default: ''
+
   fail-on-behaviour:
     description: |
       Fail the build when your hub reports NEW behaviour. Off by default: 'alert' is the only value that gates,
@@ -526,6 +554,8 @@ runs:
         INPUT_FAIL_ON_EPSS: ${{ inputs.fail-on-epss }}
         INPUT_IGNORE_SCOPE: ${{ inputs.ignore-scope }}
         INPUT_USAGE_FROM: ${{ inputs.usage-from }}
+        INPUT_USAGE_TESTS: ${{ inputs.usage-tests }}
+        INPUT_USAGE_RUN: ${{ inputs.usage-run }}
         INPUT_BEHAVIOUR_FROM: ${{ inputs.behaviour-from }}
         INPUT_SCANNER_IMAGE: ${{ inputs.scanner-image }}
         INPUT_FAIL_ON_BEHAVIOUR: ${{ inputs.fail-on-behaviour }}

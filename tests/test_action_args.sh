@@ -379,5 +379,66 @@ run "${BASE[@]}" IN_SIGN_PUBLIC_KEY=$'-----BEGIN PUBLIC KEY-----\nX\n-----END PU
 grep -q "sign-public-key is set without sign-key" "$H/run.log" && ! argv | grep -qx -- "--sign-public-key"
 check "a public key without a private key warns and passes neither" "the Scanner would refuse the flag and fail the scan" $?
 
+# ---- CI identity, usage-tests, usage-run ---------------------------------------------------------
+#
+# The container does not inherit the runner's environment. Without these the Scanner cannot tell a re-run
+# from a new run, or one CI job from another, and a hub keeps only the last job's manifests for a commit.
+# Passed by NAME (valueless -e) so docker copies the runner's value and nothing reaches argv.
+run "${BASE[@]}" GITHUB_ACTIONS=true GITHUB_RUN_ID=987654321 GITHUB_RUN_ATTEMPT=2 GITHUB_JOB=scan \
+    GITHUB_WORKFLOW_REF=acme/api/.github/workflows/ci.yml@refs/heads/main
+ok=0
+for v in GITHUB_ACTIONS GITHUB_RUN_ID GITHUB_RUN_ATTEMPT GITHUB_JOB GITHUB_WORKFLOW_REF; do
+  grep -q -- "-e $v " "$H/docker.args" || ok=1
+done
+check "the CI run, attempt, job and workflow are passed into the container" \
+      "every scan looks like the same run, and a hub cannot keep each job's manifests" $ok
+grep -q -- "987654321\|refs/heads/main" "$H/docker.args"
+[ $? -ne 0 ]
+check "CI identity is passed by name, never as a value on the command line" \
+      "values on argv drift from what the runner set, and argv is where values leak" $?
+
+run "${BASE[@]}" GITHUB_RUN_ID=1 IN_REPORT_TO=https://hub.example/api/v1/scans IN_REPORT_TOKEN=s3cr3t-token
+grep -q -- "-e DEPPROOF_REPORT_TOKEN " "$H/docker.args" && grep -q -- "-e GITHUB_RUN_ID " "$H/docker.args" \
+  && ! grep -q "s3cr3t-token" "$H/docker.args"
+check "the report token is still passed alongside CI identity, by name only" \
+      "adding CI identity must not drop the hub credential, or put it on argv" $?
+
+mkdir -p "$H/ws/test-results" && echo '<testsuite tests="1"/>' > "$H/ws/test-results/TEST-a.xml"
+run "${BASE[@]}" IN_USAGE_FROM=traces IN_USAGE_TESTS=test-results
+argv | grep -qx -- "--usage-tests" && argv | grep -qx -- "test-results"
+check "usage-tests reaches the engine" "the LOADED coverage line says tests=unknown when reports exist" $?
+
+run "${BASE[@]}" IN_USAGE_TESTS=test-results
+argv | grep -qx -- "--usage-tests"
+[ $? -ne 0 ] && grep -q "usage-tests has no effect without" "$H/run.log"
+check "usage-tests without usage-from passes no flag and says why" \
+      "test counts describe a trace; alone they describe nothing" $?
+
+run "${BASE[@]}" IN_USAGE_FROM=traces IN_USAGE_TESTS=/tmp/reports
+argv | grep -qx -- "--usage-tests"
+[ $? -ne 0 ]
+check "an absolute usage-tests path is refused" "it does not exist inside the container" $?
+
+run "${BASE[@]}" IN_USAGE_FROM=traces IN_USAGE_TESTS=no-such-reports
+argv | grep -qx -- "--usage-tests"
+[ $? -ne 0 ] && [ "$(cat "$H/exit.txt")" = "0" ]
+check "a usage-tests path that does not exist passes no flag and does not fail" \
+      "evidence must never fail a build" $?
+
+run "${BASE[@]}" IN_USAGE_FROM=traces IN_USAGE_RUN=startup
+argv | grep -qx -- "--usage-run" && argv | grep -qx -- "startup"
+check "usage-run reaches the engine" \
+      "a startup trace is judged as a test run, and its absences read as never loaded" $?
+
+run "${BASE[@]}" IN_USAGE_FROM=traces
+argv | grep -qx -- "--usage-run"
+[ $? -ne 0 ]
+check "an unset usage-run passes no flag" "the Scanner's default (tests) must stay the default" $?
+
+run "${BASE[@]}" IN_USAGE_RUN=startup
+argv | grep -qx -- "--usage-run"
+[ $? -ne 0 ]
+check "usage-run without usage-from passes no flag" "it describes a trace that is not there" $?
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

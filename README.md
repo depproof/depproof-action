@@ -149,6 +149,14 @@ All inputs are optional. The defaults handle most repos.
     report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
     waivers-online: true
     enrich-online: true
+    # The Action also passes the run's identifiers (GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_JOB,
+    # GITHUB_WORKFLOW_REF, GITHUB_ACTIONS) into the Scanner, so a re-run is told apart from a new run and
+    # each job of a multi-job pipeline is kept. Names only: no token or URL from the runner is read.
+
+    # --- Evidence (optional; none of these can fail the build unless you ask) ---
+    usage-from: traces                      # which dependencies loaded in your tests (LOADED)
+    usage-tests: target/surefire-reports    # the same run's JUnit XML, so the result says how much ran
+    behaviour-from: .depproof/behaviour     # what dependencies did (BEHAVIOUR); needs a hub
 
     # --- Coverage gating (optional) ---
     # Fail the build when a manifest could not be read as a resolved graph. Off by default; the scan
@@ -331,7 +339,7 @@ The `depproof-summary.json` schema is stable for v1 — safe to consume from dow
 
 ### Signed SBOMs, and keeping them with the release
 
-Requires Scanner 1.1 or later (the default `ghcr.io/depproof/depproof:v1` image once 1.1 is released).
+Requires Scanner 1.1 or later, which the default `ghcr.io/depproof/depproof:v1` image is from Action v1.7.0.
 
 ```yaml
 permissions:
@@ -355,6 +363,85 @@ steps:
   changes the verdict.
 - On a **tag build** with `report-to` set, the Action also reports the tag to your hub, which keeps that
   release's scan past retention and can produce its CycloneDX or SPDX later.
+
+### Recording the image you built (`record-artifact`)
+
+If you report to a hub, one step after your image build tells it which commit and pipeline produced
+which image, so the hub can show whether the proof it holds covers what ships. It uses the Scanner image
+directly; there is no input for it because it runs after your build, not in the scan step.
+
+```yaml
+- name: Build and push
+  id: build
+  uses: docker/build-push-action@v6
+  with:
+    push: true
+    tags: ghcr.io/acme/api:${{ github.sha }}
+
+- name: Record the image with the hub
+  env:
+    DEPPROOF_REPORT_TOKEN: ${{ secrets.DEPPROOF_HUB_TOKEN }}   # the same key as report-token
+  run: |
+    docker run --rm \
+      -e DEPPROOF_REPORT_TOKEN \
+      -e GITHUB_ACTIONS -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT -e GITHUB_JOB -e GITHUB_WORKFLOW_REF \
+      -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+      ghcr.io/depproof/depproof:v1 record-artifact \
+        --hub https://hub.example.com/api/v1/artifacts \
+        --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+        --digest "${{ steps.build.outputs.digest }}" --name ghcr.io/acme/api
+```
+
+- `--digest` must be the image digest, `sha256:` and 64 hex characters.
+- To record the release's SBOM beside the image, add `--sbom-file depproof-sbom.json` (a file the scan
+  wrote) and, optionally, `--sbom-location` with where you published it — a release-asset URL or an
+  attestation reference. The hub stores its hash, whether it is signed and where it lives; it never
+  fetches the file.
+- The token travels as an environment variable, never on the command line. The step never fails your
+  pipeline unless you add `--required` (exit `3` if nothing was recorded).
+- Your CD system reports where the image is deployed with `record-deploy`, using a **separate** key with
+  the `deploys:write` scope in `DEPPROOF_DEPLOY_TOKEN`, so a deploy system cannot write findings.
+
+### Signed VEX that travels with the release
+
+Every waiver approved in your hub can be exported as OpenVEX, signed with your organisation's key, so
+scanners downstream (`trivy --vex`, `grype --vex`) close the same findings without triaging them again.
+`depproof vex` fetches it and verifies the signature against a public key **you pinned** — commit the
+hub's VEX public key to the repository — before anything is written:
+
+```yaml
+permissions:
+  contents: write          # to attach to the release
+steps:
+  - name: Attach the signed VEX to the release
+    if: github.ref_type == 'tag'
+    env:
+      DEPPROOF_REPORT_TOKEN: ${{ secrets.DEPPROOF_HUB_TOKEN }}   # needs the waivers:read scope
+      GH_TOKEN: ${{ github.token }}
+    run: |
+      docker run --rm -e DEPPROOF_REPORT_TOKEN \
+        -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
+        ghcr.io/depproof/depproof:v1 vex \
+          --hub https://hub.example.com/api/v1/vex --repo "$GITHUB_REPOSITORY" \
+          --public-key .github/depproof-vex.pub.pem --out vex
+      # Attach only what verified: the signed file is written only when the signature checks out.
+      if [ -f vex/depproof.openvex.dsse.json ]; then
+        gh release upload "$GITHUB_REF_NAME" vex/depproof.openvex.json vex/depproof.openvex.dsse.json --clobber
+      fi
+```
+
+It writes `depproof.openvex.json` (the document) and `depproof.openvex.dsse.json` (the signed envelope).
+For an **image**, add `--digest <image digest> --name <image>`: the envelope is then an in-toto
+attestation about that image, which you attach with cosign:
+
+```bash
+cosign attach attestation --attestation vex/depproof.openvex.dsse.json "ghcr.io/acme/api@${DIGEST}"
+```
+
+If the signature does not verify against your pinned key, nothing signed is written and the step says
+why. Like every depproof step it does not fail the pipeline unless you add `--required`. The hub serves
+the same envelope at `GET /api/v1/vex/signed?repo=<owner/repo>` if you would rather fetch it yourself —
+verify it before you attach it.
 
 ## CI gate
 
@@ -530,7 +617,39 @@ Set one environment variable on your existing test step, then point the action a
 | JVM | `JAVA_TOOL_OPTIONS: -Xlog:class+load=info:file=traces/trace-%p.log` |
 | Node | `NODE_V8_COVERAGE: traces` |
 | Python | a `sitecustomize.py` on `PYTHONPATH` that writes loaded distributions at exit |
-| .NET | `DOTNET_STARTUP_HOOKS` set to the `DepproofLoaded.dll` shipped in the Scanner image at `/app/recorders/dotnet/` (the `behaviour-setup` step copies it to `.depproof/recorders/dotnet/`), and `DEPPROOF_LOADED_DIR: traces`. Verified on .NET 8 on Linux |
+| .NET | `DOTNET_STARTUP_HOOKS` and `DEPPROOF_LOADED_DIR` from the `behaviour-setup` step's `dotnet-startup-hooks` and `loaded-dir` outputs, then `usage-from` its `loaded-from` output (see below). .NET 6 or later; verified on .NET 8 on Linux |
+
+For .NET, the startup hook ships in the Scanner image and the `behaviour-setup` step places it for you:
+
+```yaml
+- id: behaviour
+  uses: depproof/depproof-action/behaviour-setup@v1
+- name: Test
+  env:
+    DOTNET_STARTUP_HOOKS: ${{ steps.behaviour.outputs.dotnet-startup-hooks }}
+    DEPPROOF_LOADED_DIR: ${{ steps.behaviour.outputs.loaded-dir }}
+  run: dotnet test
+- uses: depproof/depproof-action@v1
+  with:
+    usage-from: ${{ steps.behaviour.outputs.loaded-from }}
+```
+
+Set those two only on a step that runs .NET 6 or later: .NET Framework has no startup hooks. If the
+setup step could not run, `loaded-dir` is empty and the hook does nothing, and your own
+`DOTNET_STARTUP_HOOKS` is passed through unchanged.
+
+**Say how much of the suite ran (`usage-tests`).** Point it at the JUnit XML your test run wrote — a
+file or a directory — and the result's coverage line reports passed/run counts instead of
+`tests=unknown`. A suite that stopped half-way loads less, so this is how a reader knows how far to trust
+an absence. Surefire and Failsafe, Gradle, pytest (`--junitxml`), jest-junit and the .NET JUnit logger all
+write it.
+
+```yaml
+- uses: depproof/depproof-action@v1
+  with:
+    usage-from: traces
+    usage-tests: target/surefire-reports    # Gradle: build/test-results
+```
 
 The `%p` is not optional, and the same idea applies everywhere: **test runners fork.** A single
 trace file for a parallel suite silently holds one worker's view of the world, which reads as a
@@ -561,6 +680,117 @@ If the trace is missing, unreadable, or fails its own consistency checks, the ax
 for that run and says so. It does not report that nothing loaded. A tracer that failed to attach and
 a project whose dependencies genuinely never load produce identical empty files, and only one of
 those is good news.
+
+#### Proof for a repository with no tests: start the app
+
+No test suite does not mean no evidence. Start the application with the same recorder setting, wait
+until it is ready, stop it, and tell the scan the trace came from a startup (`usage-run: startup`):
+
+```yaml
+- name: Build
+  run: ./mvnw -q package -DskipTests
+
+- name: Start the app with the recorder on, then stop it
+  env:
+    JAVA_TOOL_OPTIONS: -Xlog:class+load=info:file=traces/trace-%p.log
+  run: |
+    mkdir -p traces
+    java -jar target/app.jar &
+    APP=$!
+    # Wait until it is ready (here, up to two minutes).
+    for i in $(seq 1 60); do
+      curl -fsS http://localhost:8080/actuator/health >/dev/null 2>&1 && break
+      sleep 2
+    done
+    # Optional: a few requests to the main pages load what those pages use.
+    curl -fsS http://localhost:8080/ >/dev/null || true
+    kill -TERM "$APP"; wait "$APP" || true
+
+- uses: depproof/depproof-action@v1
+  with:
+    usage-from: traces
+    usage-run: startup
+```
+
+- **"Loaded" from a startup is full evidence.** A package that did not load is shown as *not loaded at
+  startup*. That is weaker than a test run's "not loaded", because some code loads only on first use, so
+  it is never used to demote a finding and never replaces a test run's result for the same version.
+- **Stop the app so it exits normally.** The JVM's log is written as classes load. Node's coverage
+  (`NODE_V8_COVERAGE`) and the Python recorder's list are written when the process exits, so stop the
+  app with a signal it handles and exits on (most servers shut down cleanly on SIGTERM); a process killed
+  outright writes nothing for them.
+- **Packaged apps work as they ship.** The Scanner matches the jars inside a Spring Boot jar
+  (`BOOT-INF/lib`), a WAR (`WEB-INF/lib`), or a flat `lib/` folder (Jib, `installDist`) to your
+  dependencies.
+
+### What your dependencies did (`behaviour-from`)
+
+**Off unless you set it, needs a hub, and it never fails your build unless you set
+`fail-on-behaviour: alert`.**
+
+Recorders shipped in the Scanner image watch what each dependency does while your build runs — network,
+processes, file writes, secret reads — and attribute it to the package. Your hub compares that with the
+dependency's approved record and flags a new version that starts doing something new. Only normalised
+facts leave the runner (host:port, a file area, a variable name), never values, full URLs or raw traces.
+
+The `behaviour-setup` step places the recorders and hands back the settings to put on your steps:
+
+```yaml
+- id: behaviour
+  uses: depproof/depproof-action/behaviour-setup@v1
+
+- name: Install
+  env:
+    DEPPROOF_BEHAVIOUR_DIR: ${{ steps.behaviour.outputs.dir }}
+    NODE_OPTIONS: ${{ steps.behaviour.outputs.node-options }}
+  run: npm ci
+
+- name: Test
+  env:
+    DEPPROOF_BEHAVIOUR_DIR: ${{ steps.behaviour.outputs.dir }}
+    JAVA_TOOL_OPTIONS: ${{ steps.behaviour.outputs.java-tool-options }}
+    NODE_OPTIONS: ${{ steps.behaviour.outputs.node-options }}
+    PYTHONPATH: ${{ steps.behaviour.outputs.pythonpath }}
+  run: npm test
+
+- uses: depproof/depproof-action@v1
+  with:
+    report-to: https://hub.example.com/api/v1/scans
+    report-token: ${{ secrets.DEPPROOF_HUB_TOKEN }}
+    behaviour-from: ${{ steps.behaviour.outputs.from }}
+```
+
+**Set the outputs on the steps you want watched, never job-wide.** Exported for the whole job, the Node
+recorder would also load inside later JavaScript actions (cache, upload-artifact) and record their
+traffic as yours. Each output carries your existing value with the recorder added, so nothing you
+already set is lost — and if setup could not run, each output is exactly your existing value.
+
+**Put them on the install and build steps too, not only the tests.** A lot of what dependencies do
+happens before any test runs:
+
+- **npm, yarn and pnpm install scripts.** With `NODE_OPTIONS` and `DEPPROOF_BEHAVIOUR_DIR` on the install
+  step, what a package's install script does is attributed to that package as install-time behaviour.
+  The first scan after you add it may show those as new behaviour for your hub to review.
+- **Gradle and Maven plugins.** Plugins run inside the build tool's own JVM, so the agent must be in that
+  JVM: `JAVA_TOOL_OPTIONS` on the build step, or the `javaagent` output added to `MAVEN_OPTS` or to
+  `org.gradle.jvmargs` (setting `org.gradle.jvmargs` replaces Gradle's defaults, so keep your own values in
+  it). The agent writes when the JVM exits, and the Gradle daemon outlives the step: run the build with
+  `--no-daemon`, or run `./gradlew --stop` before the scan. Gradle plugins are named by artifact.
+
+  ```yaml
+  - name: Build
+    env:
+      DEPPROOF_BEHAVIOUR_DIR: ${{ steps.behaviour.outputs.dir }}
+      MAVEN_OPTS: ${{ steps.behaviour.outputs.javaagent }}   # empty if setup could not run
+    run: ./mvnw -B verify
+  ```
+- **Python source builds.** The install step needs `PYTHONPATH` and `DEPPROOF_BEHAVIOUR_DIR` too. Under
+  pip's default build isolation the scan can see only *that* a package was built from source, not what
+  the build did. uv, or `pip install --no-build-isolation` (which needs the build backend, such as
+  setuptools, installed first), shows what the build did.
+
+A capability the recorder could not observe on your runtime is reported as *not analysed*, never as
+"the dependency did not do it". .NET has a LOADED recorder (above) but no BEHAVIOUR recorder.
 
 ### Your own packages on a private registry (`internal`)
 
