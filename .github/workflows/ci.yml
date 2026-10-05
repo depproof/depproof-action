@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -14,7 +17,11 @@ jobs:
     # instead of a slow ambiguous one.
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+
+      # shellcheck ships in the ubuntu-latest image. Warnings fail the build.
+      - name: shellcheck
+        run: shellcheck -S warning scan.sh scripts/*.sh tests/*.sh
 
       - name: Summary-body tests
         run: bash tests/test_summary_body.sh

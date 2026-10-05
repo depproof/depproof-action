@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2319  # `[ cond ]; check ... $?` passes the condition's result on purpose
 # Tests for scripts/coverage_annotation.sh.
 #
 # Same division of labour as test_summary_body.sh: the engine decides what a coverage gap IS and

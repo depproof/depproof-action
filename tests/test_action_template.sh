@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2319  # `[ cond ]; check ... $?` passes the condition's result on purpose
 # Invariants about the action's own shape. Each of these has been violated in a released version.
 #
 # 1. NO run: BLOCK MAY EXCEED GITHUB'S EXPRESSION LIMIT.
@@ -16,12 +17,11 @@
 #    They never expand in a script. Same silent-empty failure as (2).
 #
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 2
 fail=0
 say() { printf '  %-6s %s\n' "$1" "$2"; }
 
 # --- 1. expression length -------------------------------------------------------------------
-LIMIT=21000
 over=$(python3 - <<'PY'
 import re, sys
 lines = open('action.yml').read().split('\n')

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2319  # `[ cond ]; check ... $?` passes the condition's result on purpose
 # Tests for scripts/summary_body.sh.
 #
 # Almost all of the display logic moved into the engine with the summary itself,

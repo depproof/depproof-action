@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2319  # `[ cond ]; check ... $?` passes the condition's result on purpose
 # Tests for scripts/behaviour_setup.sh — the BEHAVIOUR setup step.
 #
 # What matters is not that the recorders get copied; it is the two promises the step makes:

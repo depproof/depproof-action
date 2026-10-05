@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2319  # `[ cond ]; check ... $?` passes the condition's result on purpose
 # Tests that an Action input actually reaches the engine's command line.
 #
 # CI already parses `action.yml` and runs `bash -n` over scan.sh, which

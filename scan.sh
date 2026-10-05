@@ -25,7 +25,6 @@ ARGS=("scan")
 
 FILE="${INPUT_FILE}"
 FILES="${INPUT_FILES}"
-DISCOVER="${INPUT_DISCOVER}"
 
 if [ -n "$FILE" ] && [ -n "$FILES" ]; then
   echo "::error::depproof-action: 'file' and 'files' are mutually exclusive"; exit 2
@@ -34,14 +33,7 @@ fi
 if [ -n "$FILE" ]; then
   ARGS+=("/workspace/$FILE")
 elif [ -n "$FILES" ]; then
-  # Accept either newline- or comma-separated.
-  echo "$FILES" | tr ',' '\n' | while IFS= read -r line; do
-    line="$(echo "$line" | xargs)"  # trim whitespace
-    [ -z "$line" ] && continue
-    ARGS+=("/workspace/$line")
-  done
-  # NOTE: the while-loop above runs in a subshell — to actually keep the ARGS list,
-  # rebuild it here using process substitution-free expansion.
+  # Newline- or comma-separated; each entry trimmed, empty ones dropped.
   mapfile -t EXTRA < <(echo "$FILES" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' | sed 's|^|/workspace/|')
   ARGS=("scan" "${EXTRA[@]}")
 else
