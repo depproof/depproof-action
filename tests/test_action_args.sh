@@ -68,8 +68,33 @@ PY
 
 mkdir -p "$H/bin" "$H/ws"
 touch "$H/ws/package.json"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$DOCKER_ARGS_FILE"\nexit 0\n' > "$H/bin/docker"
-printf '#!/usr/bin/env bash\nexit 7\n' > "$H/bin/curl"
+# docker: records its argv, and which go.* files exist in the workspace at scan time. With
+# DOCKER_STUB_SIGNAL set it signals the step while the "scan" runs, which is what a cancelled job does.
+cat > "$H/bin/docker" <<'STUB'
+#!/usr/bin/env bash
+printf "%s\n" "$*" >> "$DOCKER_ARGS_FILE"
+( cd "$GITHUB_WORKSPACE" && find . -name 'go.*' | sort ) > "$(dirname "$DOCKER_ARGS_FILE")/go.snapshot"
+if [ -n "${DOCKER_STUB_SIGNAL:-}" ]; then kill -s "$DOCKER_STUB_SIGNAL" "$PPID"; fi
+exit 0
+STUB
+# curl: fails (exit 7, a runner with no hub) unless CURL_STUB_EXIT=0, in which case it writes '{}' to
+# its -o target. It records its argv and the content of any `-H @file` header file, so the tests can
+# tell what reached the command line from what reached curl another way.
+cat > "$H/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+d="$(dirname "$DOCKER_ARGS_FILE")"
+printf "%s\n" "$*" >> "$d/curl.args"
+out=""; prev=""
+for a in "$@"; do
+  case "$prev" in
+    -H) case "$a" in @*) cat "${a#@}" >> "$d/curl.headers" 2>/dev/null ;; esac ;;
+    -o) out="$a" ;;
+  esac
+  prev="$a"
+done
+[ "${CURL_STUB_EXIT:-7}" = "0" ] && [ -n "$out" ] && echo '{}' > "$out"
+exit "${CURL_STUB_EXIT:-7}"
+STUB
 chmod +x "$H/bin/docker" "$H/bin/curl"
 
 # bash 4.4+ expands an empty array under `set -u` without erroring; older shells cannot run the step.
@@ -85,6 +110,7 @@ fi
 
 run() { # run <IN_VAR=value>... ; leaves the engine's argv in $H/docker.args
   : > "$H/docker.args"; : > "$H/summary.md"; : > "$H/out.txt"; : > "$H/env.txt"
+  : > "$H/curl.args"; : > "$H/curl.headers"; : > "$H/go.snapshot"
   if [ "$host_ok" -eq 1 ]; then
     ( export DOCKER_ARGS_FILE="$H/docker.args" GITHUB_WORKSPACE="$H/ws" \
              GITHUB_STEP_SUMMARY="$H/summary.md" GITHUB_OUTPUT="$H/out.txt" GITHUB_ENV="$H/env.txt" \
@@ -95,7 +121,8 @@ run() { # run <IN_VAR=value>... ; leaves the engine's argv in $H/docker.args
     echo $? > "$H/exit.txt"
   else
     local envs=(); for kv in "$@"; do envs+=(-e "$kv"); done
-    docker run --rm -v "$H:/h" \
+    # The action is mounted at its host path too, so ACTION_PATH and its helper scripts resolve.
+    docker run --rm -v "$H:/h" -v "$ROOT:$ROOT:ro" \
       -e DOCKER_ARGS_FILE=/h/docker.args -e GITHUB_WORKSPACE=/h/ws \
       -e GITHUB_STEP_SUMMARY=/h/summary.md -e GITHUB_OUTPUT=/h/out.txt -e GITHUB_ENV=/h/env.txt \
       "${envs[@]}" bash:5 \
@@ -440,6 +467,119 @@ run "${BASE[@]}" IN_USAGE_RUN=startup
 argv | grep -qx -- "--usage-run"
 [ $? -ne 0 ]
 check "usage-run without usage-from passes no flag" "it describes a trace that is not there" $?
+
+# ---- temporary material: removed on every exit, including a cancelled job -------------------------
+#
+# A cancelled job is signalled while the scan runs. Without a trap the key, the hub credential and the
+# hub's responses outlive the step on a runner that may be shared or reused.
+rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" IN_SIGN_KEY="$KEYPEM" RUNNER_TEMP="$RT" DOCKER_STUB_SIGNAL=TERM
+[ -z "$(ls -A "$H/rt" 2>/dev/null)" ] && [ "$(cat "$H/exit.txt")" != "0" ]
+check "the signing key is removed when the job is cancelled (TERM)" "a private key is left on the runner" $?
+
+rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" IN_SIGN_KEY="$KEYPEM" RUNNER_TEMP="$RT" DOCKER_STUB_SIGNAL=INT
+[ -z "$(ls -A "$H/rt" 2>/dev/null)" ] && [ "$(cat "$H/exit.txt")" != "0" ]
+check "the signing key is removed when the job is interrupted (INT)" "a private key is left on the runner" $?
+
+# ---- the hub token never reaches a command line ------------------------------------------------------
+#
+# Any process on the runner can read another's argv. The token travels in a private header file that curl
+# reads with `-H @file`, and that file is gone when the step ends.
+HUB=(IN_REPORT_TO=https://hub.example/api/v1/scans IN_REPORT_TOKEN=s3cr3t-token RUNNER_TEMP="$RT")
+rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" "${HUB[@]}" IN_POLICY_ONLINE=true IN_WAIVERS_ONLINE=true IN_ENRICH_ONLINE=true CURL_STUB_EXIT=0
+[ "$(grep -c -- '-H @' "$H/curl.args")" = "3" ]
+check "policy, waivers and bulk enrichment each send the token from a header file" \
+      "a hub call goes out without credentials and every online feature fails closed" $?
+! grep -q "s3cr3t-token" "$H/curl.args" "$H/docker.args" "$H/run.log"
+check "the hub token never appears in curl's or docker's argv, or the log" \
+      "the credential is readable by every process on the runner" $?
+[ "$(grep -c "^Authorization: Bearer s3cr3t-token$" "$H/curl.headers")" = "3" ]
+check "the header file carries the token to curl" "the hub sees an unauthenticated request" $?
+[ -z "$(ls -A "$H/rt" 2>/dev/null)" ]
+check "the header file and hub responses are removed after the scan" "the token is left on the runner" $?
+
+rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" "${HUB[@]}" IN_WAIVERS_ONLINE=true CURL_STUB_EXIT=0 DOCKER_STUB_SIGNAL=TERM
+[ -z "$(ls -A "$H/rt" 2>/dev/null)" ]
+check "the header file is removed when the job is cancelled" "the token is left on the runner" $?
+
+# ---- hub responses stay out of the workspace -------------------------------------------------------
+#
+# Anything written into the workspace can be swept up by a later upload or cache step. The responses live
+# under RUNNER_TEMP and reach the Scanner through a read-only mount that does not include the header file.
+rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" "${HUB[@]}" IN_WAIVERS_ONLINE=true IN_ENRICH_ONLINE=true CURL_STUB_EXIT=0
+argv | grep -qx -- "/run/depproof-hub/waivers.json" && argv | grep -qx -- "/run/depproof-hub/enrich.json"
+check "waivers and enrichment are passed by their in-container path" "the gate runs without them" $?
+grep -q -- "/responses:/run/depproof-hub:ro " "$H/docker.args"
+check "the responses directory is mounted read-only" "the Scanner cannot read the waivers" $?
+grep -q -- "-o $RT/depproof-hub\.[^/ ]*/responses/waivers.json" "$H/curl.args" \
+  && grep -q -- "-o $RT/depproof-hub\.[^/ ]*/responses/enrich.json" "$H/curl.args" \
+  && grep -q -- "-H @$RT/depproof-hub\.[^/ ]*/auth.header" "$H/curl.args"
+check "responses land under RUNNER_TEMP, the header file outside the mounted directory" \
+      "the credential would be mounted into the Scanner" $?
+[ -z "$(find "$H/ws" -name '.depproof-*' 2>/dev/null)" ]
+check "no hub response is written into the workspace" "a later upload step could publish it" $?
+
+rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" "${HUB[@]}" IN_WAIVERS_ONLINE=true
+! argv | grep -qx -- "--waivers" && ! grep -q -- "/run/depproof-hub" "$H/docker.args" \
+  && grep -q "could not fetch waivers" "$H/run.log" && [ "$(cat "$H/exit.txt")" = "0" ]
+check "a failed waiver fetch mounts nothing, passes no flag and does not fail the step" \
+      "an unreachable hub would turn into a usage error" $?
+
+# ---- Go resolution leaves the checkout as it found it ----------------------------------------------
+#
+# `go list` with -mod=mod may rewrite go.mod and go.sum, and resolution writes go.deps.json beside each
+# module. A later step that commits, diffs or caches the tree must not see any of it. The stub rewrites
+# go.mod and go.sum the way Go can.
+cat > "$H/bin/go" <<'STUB'
+#!/usr/bin/env bash
+echo "require example.com/added v1.0.0" >> go.mod
+echo "example.com/added v1.0.0 h1:x" > go.sum
+case "$*" in *-deps*) echo '{"ImportPath":"example.com/svc"}' ;; *) echo '{"Path":"example.com/svc"}' ;; esac
+STUB
+chmod +x "$H/bin/go"
+go_tree() { # a module without go.sum, and one with go.sum and a committed go.deps.json
+  rm -rf "$H/ws/svc" "$H/ws/lib"; mkdir -p "$H/ws/svc" "$H/ws/lib"
+  printf 'module example.com/svc\n' > "$H/ws/svc/go.mod"
+  printf 'module example.com/lib\n' > "$H/ws/lib/go.mod"
+  printf 'example.com/dep v1 h1:orig\n' > "$H/ws/lib/go.sum"
+  printf 'COMMITTED\n' > "$H/ws/lib/go.deps.json"
+}
+go_untouched() {
+  [ "$(cat "$H/ws/svc/go.mod")" = "module example.com/svc" ] && [ ! -e "$H/ws/svc/go.sum" ] \
+    && [ ! -e "$H/ws/svc/go.deps.json" ] && [ ! -e "$H/ws/svc/go.pkgs.json" ] \
+    && [ "$(cat "$H/ws/lib/go.mod")" = "module example.com/lib" ] \
+    && [ "$(cat "$H/ws/lib/go.sum")" = "example.com/dep v1 h1:orig" ] \
+    && [ "$(cat "$H/ws/lib/go.deps.json")" = "COMMITTED" ] && [ ! -e "$H/ws/lib/go.pkgs.json" ]
+}
+WSROOT="$H/ws"; [ "$host_ok" -eq 1 ] || WSROOT="/h/ws"
+
+go_tree; rm -rf "${H:?}/rt"/*
+run "${BASE[@]}" RUNNER_TEMP="$RT" IN_ROOT="$WSROOT"
+grep -qx "./svc/go.deps.json" "$H/go.snapshot" && grep -qx "./svc/go.pkgs.json" "$H/go.snapshot" \
+  && grep -q "resolved .*/svc/go.mod — full module list, with scope" "$H/run.log"
+check "the resolved graph is in place while the scan runs" "Go modules fall back to the static parse" $?
+go_untouched
+check "go.mod, go.sum and go.deps.json are restored or removed after the scan" \
+      "the action leaves edits in the customer's checkout" $?
+[ -z "$(ls -A "$H/rt" 2>/dev/null)" ]
+check "the Go backups are removed after the scan" "copies of the tree accumulate on the runner" $?
+
+go_tree
+run "${BASE[@]}" RUNNER_TEMP="$RT" IN_ROOT="$WSROOT" DOCKER_STUB_SIGNAL=TERM
+go_untouched
+check "the checkout is restored when the job is cancelled mid-scan" "a cancelled job leaves edits behind" $?
+
+go_tree
+run "${BASE[@]}" RUNNER_TEMP="/nonexistent/runner-temp" IN_ROOT="$WSROOT"
+go_untouched && grep -q "could not back up" "$H/run.log" && [ "$(cat "$H/exit.txt")" = "0" ]
+check "no backup means no resolution, never an unrestorable edit" \
+      "the tree is rewritten with no way back" $?
+rm -rf "$H/ws/svc" "$H/ws/lib" "$H/bin/go"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

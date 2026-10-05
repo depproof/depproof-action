@@ -61,7 +61,7 @@ your repo
 
 That `uses:` line is the whole integration. There is nothing to vendor, install, or keep in sync —
 no config file of ours in your repo, no runner dependencies (no local Java, Maven, Gradle or Node
-needed). `@v1` is a rolling major tag that picks up fixes; pin to a full version (`@v1.4.1`) or a
+needed). `@v1` is a rolling major tag that picks up fixes; pin to a full version (`@v1.7.0`) or a
 commit SHA if you would rather approve every change yourself.
 
 The scan writes its results into the workspace — SBOMs, an HTML report, `depproof-summary.md` — and
@@ -172,7 +172,7 @@ Auto-discovery finds these manifests anywhere in your repo:
 - `package-lock.json` (npm), `pnpm-lock.yaml` (pnpm), `yarn.lock` (yarn) — resolved straight from the lockfile, no install
 - `poetry.lock`, `pdm.lock`, `uv.lock`, `Pipfile.lock`, `requirements.txt`, `pyproject.toml` (Python) — resolved from the lockfile; a lockless `pyproject.toml` is a minimum-version fallback, so commit a lockfile (or generate one in a prior CI step) for an exact result
 - `packages.lock.json`, `*.csproj` / `*.fsproj` / `*.vbproj`, `packages.config` (.NET / NuGet) — a `packages.lock.json` is the **exact** resolved graph. Without one, run `dotnet restore` in a step **before** the scan: each project file then resolves exactly from the `obj/project.assets.json` that restore wrote. A project file with neither is a declared-only read of its direct `PackageReference`s
-- `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -deps -test -json ./...` on the runner for the **exact** resolved graph **including which modules only tests need** (written to `go.deps.json`, preferred over `go.mod`). If that fails — it type-checks, so a tree that does not build will — it falls back to `go list -m -json all`, which is still exact but carries no test/build split, and then to a static `go.mod` parse when `go` isn't on the runner
+- `go.mod` (Go) — with `go-online: true` (default), the action runs `go list -m -json all` on the runner for the **exact** resolved module list (written to `go.deps.json`, preferred over `go.mod`), then `go list -deps -test -json ./...` to learn **which modules only tests need** (`go.pkgs.json`). The second step type-checks, so a tree that does not build keeps the exact list without the test/build split; without `go` on the runner the action falls back to a static `go.mod` parse. Resolution may touch `go.mod` and `go.sum`; the action restores both, and removes the generated files, once the scan ends — on failure or cancellation too
 
 And **skips** these directories (build output and vendored code — nothing to audit there):
 - `node_modules/`, `target/`, `build/`, `.gradle/`, `.git/`, `dist/`, `out/`, `vendor/`, `test-fixtures/`, `__fixtures__/`

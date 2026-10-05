@@ -420,7 +420,8 @@ inputs:
     description: |
       For Go modules, run `go list -m -json all` on the runner (when `go` is available) to resolve the
       exact module graph instead of statically parsing `go.mod`. Best-effort: falls back to the static
-      `go.mod` parse if `go` is missing or the command fails. Default: true.
+      `go.mod` parse if `go` is missing or the command fails. The checkout is left as found: go.mod and
+      go.sum are restored, and the generated go.deps.json removed, after the scan. Default: true.
     required: false
     default: 'true'
   job-summary:

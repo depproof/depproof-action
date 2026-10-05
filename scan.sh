@@ -14,6 +14,91 @@
 
 set -euo pipefail
 
+# Material this run creates outside its own outputs: the signing key, the hub credential and the hub's
+# responses (all under RUNNER_TEMP), and the files Go resolution writes into the checkout. A trap removes
+# or restores all of it, because a failed or cancelled job must leave no secret on the runner and no edit
+# in the tree -- a later step may upload, commit or cache either.
+KEY_DIR=""
+HUB_TMP=""
+HUB_MOUNT=0
+GO_BACKUP=""
+GO_DIRS=()
+# Every file Go resolution can create or rewrite. One that existed is put back as it was; one that did
+# not is removed, so a go.deps.json the repository committed itself survives.
+GO_FILES=(go.mod go.sum go.deps.json go.pkgs.json)
+DOCKER_MOUNTS=()
+
+restore_go_tree() {
+  local i f
+  [ -n "$GO_BACKUP" ] || return 0
+  for i in "${!GO_DIRS[@]}"; do
+    for f in "${GO_FILES[@]}"; do
+      if [ -e "${GO_BACKUP}/${i}/${f}" ]; then
+        cp -p "${GO_BACKUP}/${i}/${f}" "${GO_DIRS[$i]}/${f}"
+      else
+        rm -f "${GO_DIRS[$i]}/${f}"
+      fi
+    done
+  done
+  rm -rf "$GO_BACKUP"
+  GO_BACKUP=""
+}
+
+remove_temporaries() {
+  restore_go_tree
+  if [ -n "$KEY_DIR" ]; then rm -rf "$KEY_DIR"; KEY_DIR=""; fi
+  if [ -n "$HUB_TMP" ]; then rm -rf "$HUB_TMP"; HUB_TMP=""; fi
+}
+
+on_exit() {
+  local rc=$?
+  set +e
+  remove_temporaries
+  exit "$rc"
+}
+trap on_exit EXIT
+# A cancelled job is signalled, not exited; turning the signal into an exit is what runs the trap above.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# workspace_path_arg <input> <flag> <value> <if-absolute> <if-missing>
+# The scan runs in a container that sees only the workspace, so a path outside it does not exist there
+# and the engine would quietly behave as if the input were never set. Accepted paths are added to ARGS;
+# anything else warns, adds nothing and returns 1. Never fails the build.
+workspace_path_arg() {
+  case "$3" in
+    /*) echo "::warning::$1 must be a path inside the workspace, not an absolute path ($3). $4"
+        return 1 ;;
+  esac
+  if [ -e "${GITHUB_WORKSPACE}/$3" ]; then
+    ARGS+=("$2" "$3")
+    return 0
+  fi
+  echo "::warning::$5"
+  return 1
+}
+
+# hub_ready <input> <what-happens-instead>
+# Every hub-backed input needs both the URL and the token; without them it warns and is skipped.
+hub_ready() {
+  if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
+    echo "::warning::depproof-action: $1 needs report-to + report-token — skipping ($2)."
+    return 1
+  fi
+}
+
+# hub_auth_header: makes ${HUB_TMP}/auth.header for `curl -H @file`. The token goes into a file, never
+# onto curl's command line, where any process on the runner can read it. The responses directory beside
+# it is what the Scanner gets mounted; the header file is not in it.
+hub_auth_header() {
+  if [ -z "$HUB_TMP" ]; then
+    HUB_TMP="$(mktemp -d "${RUNNER_TEMP:-/tmp}/depproof-hub.XXXXXX" 2>/dev/null)" || { HUB_TMP=""; return 1; }
+    mkdir "${HUB_TMP}/responses" 2>/dev/null || return 1
+    ( umask 077; printf 'Authorization: Bearer %s\n' "${DEPPROOF_REPORT_TOKEN}" > "${HUB_TMP}/auth.header" ) 2>/dev/null
+  fi
+  [ -s "${HUB_TMP}/auth.header" ] && [ -d "${HUB_TMP}/responses" ]
+}
+
 # Default outputs to the workspace so artifacts are easy to upload as build artifacts.
 OUTPUT_DIR="${INPUT_OUTPUT_DIR}"
 OUTPUT_DIR="${OUTPUT_DIR:-${GITHUB_WORKSPACE}}"
@@ -71,24 +156,13 @@ fi
 # the engine would find no trace, turn the axis off, and produce a scan that looks exactly like
 # one where the user never asked for it. A wrong scope word is a loud usage error; a wrong path
 # here is silence.
-if [ -n "${INPUT_USAGE_FROM}" ]; then
-  case "${INPUT_USAGE_FROM}" in
-    /*) echo "::warning::usage-from must be a path inside the workspace, not an absolute path" \
-             "(${INPUT_USAGE_FROM}). The scan runs in a container where that path does not exist;" \
-             "the usage axis is OFF for this run." ;;
-    *)
-      if [ -e "${GITHUB_WORKSPACE}/${INPUT_USAGE_FROM}" ]; then
-        ARGS+=("--usage-from" "${INPUT_USAGE_FROM}")
-        USAGE_ON=1
-      else
-        # Named explicitly, because "I set usage-from and got no usage output" is otherwise an
-        # unanswerable question. The most common cause by far is a test step that wrote no trace.
-        echo "::warning::usage-from path '${INPUT_USAGE_FROM}' does not exist in the workspace." \
-             "Did the test step run, and did it write the trace there? The usage axis is OFF" \
-             "for this run; the scan itself is unaffected."
-      fi
-      ;;
-  esac
+#
+# The missing-path warning is explicit, because "I set usage-from and got no usage output" is otherwise
+# an unanswerable question. The most common cause by far is a test step that wrote no trace.
+if [ -n "${INPUT_USAGE_FROM}" ] && workspace_path_arg usage-from --usage-from "${INPUT_USAGE_FROM}" \
+     "The scan runs in a container where that path does not exist; the usage axis is OFF for this run." \
+     "usage-from path '${INPUT_USAGE_FROM}' does not exist in the workspace. Did the test step run, and did it write the trace there? The usage axis is OFF for this run; the scan itself is unaffected."; then
+  USAGE_ON=1
 fi
 
 # usage-tests and usage-run describe the trace above, so they mean nothing without it: passed only when
@@ -101,18 +175,10 @@ if [ -n "${INPUT_USAGE_TESTS:-}" ]; then
   if [ "${USAGE_ON:-0}" != "1" ]; then
     echo "::warning::usage-tests has no effect without a usable usage-from trace; ignored for this run."
   else
-    case "${INPUT_USAGE_TESTS}" in
-      /*) echo "::warning::usage-tests must be a path inside the workspace, not an absolute path" \
-               "(${INPUT_USAGE_TESTS}). Test counts stay unknown for this run." ;;
-      *)
-        if [ -e "${GITHUB_WORKSPACE}/${INPUT_USAGE_TESTS}" ]; then
-          ARGS+=("--usage-tests" "${INPUT_USAGE_TESTS}")
-        else
-          echo "::warning::usage-tests path '${INPUT_USAGE_TESTS}' does not exist in the workspace." \
-               "Did the test step write JUnit XML there? Test counts stay unknown for this run."
-        fi
-        ;;
-    esac
+    workspace_path_arg usage-tests --usage-tests "${INPUT_USAGE_TESTS}" \
+      "Test counts stay unknown for this run." \
+      "usage-tests path '${INPUT_USAGE_TESTS}' does not exist in the workspace. Did the test step write JUnit XML there? Test counts stay unknown for this run." \
+      || true
   fi
 fi
 # usage-run: what produced the trace — 'tests' (the default) or 'startup' for a repository with no test
@@ -143,39 +209,19 @@ esac
 # only, and a wrong or empty path warns rather than failing the build. The recorder must have run in the
 # test step and written its output here.
 if [ -n "${INPUT_BEHAVIOUR_FROM}" ]; then
-  case "${INPUT_BEHAVIOUR_FROM}" in
-    /*) echo "::warning::behaviour-from must be a path inside the workspace, not an absolute path" \
-             "(${INPUT_BEHAVIOUR_FROM}). The scan runs in a container where that path does not exist;" \
-             "the BEHAVIOUR axis is OFF for this run." ;;
-    *)
-      if [ -e "${GITHUB_WORKSPACE}/${INPUT_BEHAVIOUR_FROM}" ]; then
-        ARGS+=("--behaviour-from" "${INPUT_BEHAVIOUR_FROM}")
-      else
-        echo "::warning::behaviour-from path '${INPUT_BEHAVIOUR_FROM}' does not exist in the workspace." \
-             "Did the test step run with the recorder, and did it write here? The BEHAVIOUR axis is OFF" \
-             "for this run; the scan itself is unaffected."
-      fi
-      ;;
-  esac
+  workspace_path_arg behaviour-from --behaviour-from "${INPUT_BEHAVIOUR_FROM}" \
+    "The scan runs in a container where that path does not exist; the BEHAVIOUR axis is OFF for this run." \
+    "behaviour-from path '${INPUT_BEHAVIOUR_FROM}' does not exist in the workspace. Did the test step run with the recorder, and did it write here? The BEHAVIOUR axis is OFF for this run; the scan itself is unaffected." \
+    || true
 fi
 # The committed baseline. Same absolute-path trap as usage-from, and a worse failure mode if it is
 # missed: a baseline that silently does not load means the backlog fails the build again, and the
 # obvious conclusion is "the baseline does not work" rather than "the path was wrong".
 if [ -n "${INPUT_BASELINE}" ]; then
-  case "${INPUT_BASELINE}" in
-    /*) echo "::warning::baseline must be a path inside the workspace, not an absolute path" \
-             "(${INPUT_BASELINE}). The scan runs in a container where that path does not exist;" \
-             "the baseline is NOT applied and pre-existing findings will fail the build." ;;
-    *)
-      if [ -e "${GITHUB_WORKSPACE}/${INPUT_BASELINE}" ]; then
-        ARGS+=("--baseline" "${INPUT_BASELINE}")
-      else
-        echo "::warning::baseline file '${INPUT_BASELINE}' does not exist in the workspace." \
-             "It is NOT applied, so findings that predate it will fail the build. Did you commit" \
-             "the file produced by write-baseline?"
-      fi
-      ;;
-  esac
+  workspace_path_arg baseline --baseline "${INPUT_BASELINE}" \
+    "The scan runs in a container where that path does not exist; the baseline is NOT applied and pre-existing findings will fail the build." \
+    "baseline file '${INPUT_BASELINE}' does not exist in the workspace. It is NOT applied, so findings that predate it will fail the build. Did you commit the file produced by write-baseline?" \
+    || true
 fi
 if [ -n "${INPUT_INTERNAL}" ]; then
   ARGS+=("--internal" "${INPUT_INTERNAL}")
@@ -274,10 +320,31 @@ fi
 # fails on a tree that does not build, where tier 2 succeeds from the module graph alone. That
 # is why it falls back rather than replacing — a repository that cannot compile should lose
 # the scope, not the whole dependency graph.
+#
+# `-mod=mod` stays, because resolution fails without it on trees whose go.sum is incomplete, but it may
+# rewrite go.mod and go.sum. Each module directory is backed up first and put back by the trap after the
+# scan, and the generated files are removed then too, so the checkout ends as it started even when the
+# job fails. A directory that cannot be backed up is not resolved: an untouched tree comes first.
+go_backup() { # <dir>
+  local slot="${GO_BACKUP}/${#GO_DIRS[@]}" f
+  mkdir "$slot" 2>/dev/null || return 1
+  for f in "${GO_FILES[@]}"; do
+    if [ -e "$1/$f" ] && ! cp -p "$1/$f" "$slot/$f" 2>/dev/null; then
+      rm -rf "$slot"
+      return 1
+    fi
+  done
+  GO_DIRS+=("$1")
+}
 if [ "${INPUT_GO_ONLINE:-true}" = "true" ]; then
   if command -v go >/dev/null 2>&1; then
+    GO_BACKUP="$(mktemp -d "${RUNNER_TEMP:-/tmp}/depproof-go.XXXXXX" 2>/dev/null)" || GO_BACKUP=""
     while IFS= read -r gomod; do
       gdir="$(dirname "$gomod")"
+      if [ -z "$GO_BACKUP" ] || ! go_backup "$gdir"; then
+        echo "::warning::depproof-action: could not back up ${gdir}/go.mod before resolving it — using the static go.mod parse"
+        continue
+      fi
       if ( cd "$gdir" && GOFLAGS=-mod=mod go list -m -json all > go.deps.json 2>/dev/null ) \
          && [ -s "${gdir}/go.deps.json" ]; then
         # The scope sidecar is best-effort ON TOP, never instead: it type-checks, so it fails
@@ -311,15 +378,13 @@ fi
 # live in one place instead of being re-derived by every consumer — a client reading
 # `.policy` and enforcing it would ignore WARN and redden the estate it was meant to survey.
 if [ "${INPUT_POLICY_ONLINE:-false}" = "true" ]; then
-  if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
-    echo "::warning::depproof-action: policy-online needs report-to + report-token — skipping (scanner defaults apply)."
-  else
+  if hub_ready policy-online "scanner defaults apply"; then
     POLICY_URL="${INPUT_REPORT_TO%/scans}/policy"
-    POLICY_FILE="${RUNNER_TEMP:-/tmp}/.depproof-policy.json"
-    if curl -fsS --max-time 20 \
-         -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+    if hub_auth_header && curl -fsS --max-time 20 \
+         -H "@${HUB_TMP}/auth.header" \
          "${POLICY_URL}?repo=${GITHUB_REPOSITORY:-}" \
-         -o "${POLICY_FILE}"; then
+         -o "${HUB_TMP}/policy.json"; then
+      POLICY_FILE="${HUB_TMP}/policy.json"
       # Parsed by a script rather than inline: the value can legitimately be JSON null, and
       # a regex that cannot tell null from the string "null" would turn "the org stated
       # nothing" into a flag value the engine rejects as a usage error.
@@ -344,17 +409,17 @@ fi
 # Online-mode waivers: fetch the active waiver set from the hub and pass it to the gate so
 # centrally-waived findings don't fail the build. FAIL-CLOSED — if the fetch fails we do NOT
 # apply waivers (the gate stays strict) and warn, so an unreachable hub can never silently
-# turn a red build green. The file lands in the workspace so it's visible inside the container.
+# turn a red build green. The file lands under RUNNER_TEMP, not the workspace, so no later upload step
+# can publish it, and reaches the Scanner through a read-only mount.
 if [ "${INPUT_WAIVERS_ONLINE:-false}" = "true" ]; then
-  if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
-    echo "::warning::depproof-action: waivers-online needs report-to + report-token — skipping (gate stays strict)."
-  else
+  if hub_ready waivers-online "gate stays strict"; then
     WAIVERS_URL="${INPUT_REPORT_TO%/scans}/waivers"
-    if curl -fsS --max-time 20 \
-         -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+    if hub_auth_header && curl -fsS --max-time 20 \
+         -H "@${HUB_TMP}/auth.header" \
          "${WAIVERS_URL}?repo=${GITHUB_REPOSITORY:-}" \
-         -o "${GITHUB_WORKSPACE}/.depproof-waivers.json"; then
-      ARGS+=("--waivers" "/workspace/.depproof-waivers.json")
+         -o "${HUB_TMP}/responses/waivers.json"; then
+      ARGS+=("--waivers" "/run/depproof-hub/waivers.json")
+      HUB_MOUNT=1
       echo "depproof-action: applied hub waivers from ${WAIVERS_URL}"
     else
       echo "::warning::depproof-action: could not fetch waivers from the hub — gate stays strict (fail-closed)."
@@ -366,11 +431,9 @@ fi
 # Separate from enrichment below, and the order is why: /enrich is keyed on the finding ids,
 # and those do not exist until detection has run.
 if [ "${INPUT_DETECT_ONLINE:-false}" = "true" ]; then
-  if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
-    # A warning and the default path, not a silent one: without a hub there is still a working
-    # detection route (OSV.dev), so falling back is honest — pretending we used the hub is not.
-    echo "::warning::depproof-action: detect-online needs report-to + report-token — skipping (advisories will come from OSV.dev)."
-  else
+  # A warning and the default path, not a silent one: without a hub there is still a working
+  # detection route (OSV.dev), so falling back is honest — pretending we used the hub is not.
+  if hub_ready detect-online "advisories will come from OSV.dev"; then
     ADVISORIES_URL="${INPUT_REPORT_TO%/scans}/advisories"
     ARGS+=("--advisories-from" "${ADVISORIES_URL}")
     echo "depproof-action: advisories will be served by the hub at ${ADVISORIES_URL} (no call to OSV.dev)"
@@ -381,11 +444,9 @@ fi
 # because the three travel independently: a repository can take licences from the hub while
 # taking exploitation data from a prepared file, which is the common combination.
 if [ "${INPUT_LICENSES_ONLINE:-false}" = "true" ]; then
-  if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
-    # Warn and carry on with the default route: licences still resolve, just not via the hub.
-    # Silently pretending otherwise would be worse than the slower path.
-    echo "::warning::depproof-action: licenses-online needs report-to + report-token — skipping (licences will be fetched directly)."
-  else
+  # Warn and carry on with the default route: licences still resolve, just not via the hub.
+  # Silently pretending otherwise would be worse than the slower path.
+  if hub_ready licenses-online "licences will be fetched directly"; then
     LICENSES_URL="${INPUT_REPORT_TO%/scans}/enrich"
     ARGS+=("--licenses-from" "${LICENSES_URL}")
     echo "depproof-action: licences will be answered by the hub at ${LICENSES_URL}"
@@ -407,9 +468,7 @@ fi
 # Bulk is fetched here because the ids do not exist until after the scan, while args are built
 # before it — that ordering is the whole reason the two modes exist.
 if [ "${INPUT_ENRICH_ONLINE:-false}" = "true" ]; then
-  if [ -z "${INPUT_REPORT_TO:-}" ] || [ -z "${DEPPROOF_REPORT_TOKEN:-}" ]; then
-    echo "::warning::depproof-action: enrich-online needs report-to + report-token — skipping (no exploitation data applied)."
-  else
+  if hub_ready enrich-online "no exploitation data applied"; then
     ENRICH_URL="${INPUT_REPORT_TO%/scans}/enrich"
     if [ "${INPUT_ENRICH_MODE:-bulk}" = "targeted" ]; then
       # depproof does the request itself, and fails closed (exit 4) if the hub is unreachable
@@ -420,13 +479,14 @@ if [ "${INPUT_ENRICH_ONLINE:-false}" = "true" ]; then
     else
       # FAIL-CLOSED: on a failed fetch we apply nothing and warn loudly. A missing snapshot
       # must never read as "nothing is being exploited".
-      if curl -fsS --max-time 30 -X POST \
-           -H "Authorization: Bearer ${DEPPROOF_REPORT_TOKEN}" \
+      if hub_auth_header && curl -fsS --max-time 30 -X POST \
+           -H "@${HUB_TMP}/auth.header" \
            -H "Content-Type: application/json" \
            -d "{\"bulk\":true,\"want\":[\"kev\"],\"repo\":\"${GITHUB_REPOSITORY:-}\",\"commit\":\"${GITHUB_SHA:-}\"}" \
            "${ENRICH_URL}" \
-           -o "${GITHUB_WORKSPACE}/.depproof-enrich.json"; then
-        ARGS+=("--enrich" "/workspace/.depproof-enrich.json")
+           -o "${HUB_TMP}/responses/enrich.json"; then
+        ARGS+=("--enrich" "/run/depproof-hub/enrich.json")
+        HUB_MOUNT=1
         ENRICH_APPLIED=1
         echo "depproof-action: applied hub enrichment from ${ENRICH_URL} (bulk)"
       else
@@ -496,19 +556,17 @@ SCANNER_IMAGE="${SCANNER_IMAGE:-ghcr.io/depproof/depproof:v1}"
 set +e
 # SBOM author and signing. The private key is written to the runner's temporary directory —
 # outside the workspace, so no later upload step can sweep it up — mounted read-only, and deleted as
-# soon as the scan returns.
-DOCKER_MOUNTS=()
+# soon as the scan returns (or by the trap, if the job is cancelled first).
 if [ -n "${INPUT_SBOM_AUTHOR:-}" ]; then
   ARGS+=("--sbom-author" "${INPUT_SBOM_AUTHOR}")
 fi
-KEY_DIR=""
 if [ -n "${DEPPROOF_SIGN_KEY:-}" ] && ! KEY_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/depproof-keys.XXXXXX" 2>/dev/null)"; then
   # Never fall back to writing the key somewhere else: no private directory, no signature.
   KEY_DIR=""
   echo "::warning::depproof-action: could not create a private directory for the signing key — the SBOM will not be signed."
 elif [ -n "${DEPPROOF_SIGN_KEY:-}" ]; then
   ( umask 077; printf '%s\n' "${DEPPROOF_SIGN_KEY}" > "${KEY_DIR}/sign-key.pem" )
-  DOCKER_MOUNTS=("-v" "${KEY_DIR}:/run/depproof-keys:ro")
+  DOCKER_MOUNTS+=("-v" "${KEY_DIR}:/run/depproof-keys:ro")
   ARGS+=("--sign-key" "/run/depproof-keys/sign-key.pem")
   if [ -n "${INPUT_SIGN_PUBLIC_KEY:-}" ]; then
     printf '%s\n' "${INPUT_SIGN_PUBLIC_KEY}" > "${KEY_DIR}/sign-public-key.pem"
@@ -516,6 +574,9 @@ elif [ -n "${DEPPROOF_SIGN_KEY:-}" ]; then
   fi
 elif [ -n "${INPUT_SIGN_PUBLIC_KEY:-}" ]; then
   echo "::warning::depproof-action: sign-public-key is set without sign-key — the SBOM will not be signed."
+fi
+if [ "$HUB_MOUNT" = "1" ]; then
+  DOCKER_MOUNTS+=("-v" "${HUB_TMP}/responses:/run/depproof-hub:ro")
 fi
 
 docker run --rm \
@@ -527,7 +588,7 @@ docker run --rm \
   "${ARGS[@]}"
 DEPPROOF_EXIT=$?
 set -e
-[ -n "${KEY_DIR}" ] && rm -rf "${KEY_DIR}"
+remove_temporaries || true
 
 # The original travels with the release: on a tag build, attach the SBOM files the scan
 # just wrote to the GitHub release for that tag. Best-effort — the verdict is already decided.
