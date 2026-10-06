@@ -67,10 +67,9 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # The action is a composite whose body is one large bash script inside a YAML block scalar.
-      # Both halves can break independently and neither shows up until a consumer's build fails:
-      # a mis-indented heredoc breaks the YAML, and a typo breaks the shell. Cheap to check here.
-      # `bash -n` below proves the shell PARSES. This proves an input actually reaches the engine:
+      # The action is YAML whose one step runs scan.sh, which sources its steps from scripts/.
+      # Either half can break without showing up until a consumer's build fails. shellcheck above
+      # proves the shell is sound. This proves an input actually reaches the engine:
       # a wiring that silently drops `ignore-scope` leaves valid YAML, valid shell, and a gate that
       # is never narrowed, with nothing anywhere to explain the build that failed.
       - name: Action argument tests

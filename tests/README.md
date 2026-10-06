@@ -1,9 +1,9 @@
 # Tests
 
 ```bash
-bash tests/test_summary_body.sh
-bash tests/test_coverage_annotation.sh
+for t in tests/*.sh; do bash "$t" || exit 1; done
 python3 tests/test_gitlab_mr_note.py
+shellcheck -S warning scan.sh scripts/*.sh tests/*.sh
 ```
 
 No dependencies, no network, no Docker.
@@ -72,11 +72,12 @@ failure path exits `0`.
 
 ## The rest of the Action
 
-`action.yml` is a bash script inside a YAML block scalar — two languages that can each break
-independently, in a repository with no build step, where a break does not fail here but in a
-consumer's pipeline at `@v1`. CI therefore parses `action.yml` and runs `bash -n` over the embedded
-script. That check earned itself immediately: multi-line Python in a `run:` block broke the YAML
-during development.
+`action.yml` is YAML whose one composite step runs `scan.sh`, a short script that orders the steps
+kept in `scripts/scan_*.sh` — two languages that can each break independently, in a repository with
+no build step, where a break does not fail here but in a consumer's pipeline at `@v1`. CI therefore
+parses `action.yml` and runs shellcheck over every script, warnings included.
+`test_action_template.sh` guards the action definition itself: a `run:` block that grows past
+GitHub's expression limit fails to compile for every consumer before anything executes.
 
 `test_action_args.sh` covers the failure `bash -n` cannot see: an input wired to nothing. It
 extracts the composite step, rewrites each `${{ inputs.x }}` to `${IN_X:-}` so real values can be
