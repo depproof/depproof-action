@@ -57,6 +57,12 @@ if "scan.sh" not in run:
 import os
 body = open(os.path.join(os.path.dirname(sys.argv[1]), "scan.sh")).read()
 open(sys.argv[2], "w").write(re.sub(r"\$\{\{([^}]*)\}\}", sub, body))
+# scan.sh sources its steps from scripts/ beside itself, so they go beside the copy too.
+import glob
+os.makedirs(os.path.join(os.path.dirname(sys.argv[2]), "scripts"), exist_ok=True)
+for lib in glob.glob(os.path.join(os.path.dirname(sys.argv[1]), "scripts", "scan_*.sh")):
+    dst = os.path.join(os.path.dirname(sys.argv[2]), "scripts", os.path.basename(lib))
+    open(dst, "w").write(re.sub(r"\$\{\{([^}]*)\}\}", sub, open(lib).read()))
 with open(sys.argv[3], "w") as f:
     for k, v in (step.get("env") or {}).items():
         m = re.match(r"\$\{\{\s*inputs\.([\w-]+)\s*\}\}", v) if isinstance(v, str) else None

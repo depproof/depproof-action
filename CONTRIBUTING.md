@@ -1,7 +1,8 @@
 # Contributing
 
 - **Shell:** `scan.sh` and `scripts/` must pass `shellcheck -S warning`. Repeated blocks become functions,
-  and a script that grows past 300 lines is split into `scripts/`.
+  and a script that grows past 300 lines is split into `scripts/`. `scan.sh` only orders the steps; each
+  step lives in a `scripts/scan_*.sh` file that it sources.
 - **Inputs** reach scripts only through `env:` in `action.yml`, never through `${{ }}` inside `run:`.
 - **Secrets** never go on a command line or into the workspace; temporary key material is removed in a
   `trap`, including when a job is cancelled.

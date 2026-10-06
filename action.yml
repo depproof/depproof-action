@@ -507,9 +507,9 @@ inputs:
     required: false
     default: ${{ github.token }}
 
-# Composite action: shell-builds the depproof args based on inputs, then invokes the Docker image
-# via `docker run`. We don't use the simpler `runs: docker` form because it can't conditionally
-# pass args based on which input the user provided.
+# Composite action: scan.sh builds the depproof args from the inputs, then invokes the Docker image
+# via `docker run`. Not the simpler `runs: docker` form, because that cannot conditionally pass args
+# based on which inputs the user provided.
 runs:
   using: 'composite'
   steps:
@@ -569,7 +569,7 @@ runs:
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_SARIF_UPLOAD: ${{ inputs.sarif-upload }}
         ACTION_PATH: ${{ github.action_path }}
-      # The body lives in scan.sh, NOT inline. See the header there: a run: block with
-      # expressions in it is compiled as one template expression and capped at 21,000
-      # characters, and this one had grown past it, breaking every consumer of @v1.
+      # The body lives in scan.sh, NOT inline: a run: block with expressions in it is compiled
+      # as one template expression, capped at 21,000 characters, and a body past the cap stops
+      # the action compiling for every consumer. scan.sh sources its steps from scripts/.
       run: bash "${{ github.action_path }}/scan.sh"

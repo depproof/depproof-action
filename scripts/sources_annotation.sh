@@ -41,8 +41,8 @@ except Exception:
 # `enrichmentReachReported` has to be PRESENT and true. This Action ships on a rolling @v1 tag while
 # the engine ships as an image, so a runner can pair a new Action with an older engine — and that
 # engine defaults enrichmentReach to REACHED simply so its payload parses. Treating the default as
-# an assertion would print "all sources reached" for a scanner that never checked, which is the
-# precise failure this annotation was added to prevent, reintroduced by version skew.
+# an assertion would print "all sources reached" for a scanner that never checked — the very failure
+# this annotation exists to prevent.
 reporting = [m for m in manifests if m.get("enrichmentReachReported")]
 if not reporting:
     sys.exit(0)

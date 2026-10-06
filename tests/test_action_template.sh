@@ -8,12 +8,12 @@
 #    is not valid" -- before a single line runs. A passing unit test suite does not catch this,
 #    because the failure is in the action definition rather than in anything it executes.
 #
-# 2. EVERY INPUT_* scan.sh READS MUST BE EXPORTED BY action.yml.
+# 2. EVERY INPUT_* scan.sh (OR A STEP IT SOURCES) READS MUST BE EXPORTED BY action.yml.
 #    scan.sh is a script, not a template: it cannot see the `inputs` context. An input referenced
 #    there and not exported here reads as EMPTY, silently -- so a flag goes missing and the scan
 #    still reports success.
 #
-# 3. NO ${{ }} IN scan.sh's EXECUTABLE CODE.
+# 3. NO ${{ }} IN THE EXECUTABLE CODE OF scan.sh OR THE STEPS IT SOURCES.
 #    They never expand in a script. Same silent-empty failure as (2).
 #
 set -uo pipefail
@@ -50,8 +50,9 @@ fi
 # --- 2. the scan.sh <-> action.yml env contract ---------------------------------------------
 if [ -f scan.sh ]; then
   miss=$(python3 - <<'PY'
-import re
-sh, yml = open('scan.sh').read(), open('action.yml').read()
+import glob, re
+sh = ''.join(open(p).read() for p in ['scan.sh'] + sorted(glob.glob('scripts/scan_*.sh')))
+yml = open('action.yml').read()
 used = set(re.findall(r'\$\{?(INPUT_[A-Z0-9_]+)', sh)) | set(re.findall(r'\$\{?(ACTION_PATH)\b', sh))
 exported = set(re.findall(r'^\s+(INPUT_[A-Z0-9_]+|ACTION_PATH):', yml, re.M))
 print('\n'.join(sorted(used - exported)))
@@ -65,9 +66,9 @@ PY
   fi
   # and the inverse: no ${{ }} may creep back into the script
   # Comments are excluded deliberately: the header explains the rule and would match itself.
-  if grep -v '^[[:space:]]*#' scan.sh | grep -q '\${{'; then
-    say FAIL "scan.sh has \${{ }} in executable code -- it is a script, not a template"
-    grep -vn '^[[:space:]]*#' scan.sh | grep '\${{' | head -5 | sed 's/^/         /'
+  if cat scan.sh scripts/scan_*.sh | grep -v '^[[:space:]]*#' | grep -q '\${{'; then
+    say FAIL "scan.sh or a step it sources has \${{ }} in executable code -- it is a script, not a template"
+    grep -Hn '\${{' scan.sh scripts/scan_*.sh | grep -v ':[0-9]*:[[:space:]]*#' | head -5 | sed 's/^/         /'
     fail=1
   else
     say ok "scan.sh has no template expressions in executable code"
