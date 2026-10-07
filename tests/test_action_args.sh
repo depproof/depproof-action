@@ -78,7 +78,10 @@ touch "$H/ws/package.json"
 # DOCKER_STUB_SIGNAL set it signals the step while the "scan" runs, which is what a cancelled job does.
 cat > "$H/bin/docker" <<'STUB'
 #!/usr/bin/env bash
+# `docker info` answers from DOCKER_STUB_INFO and is not recorded: it is a question, not the scan.
+if [ "${1:-}" = "info" ]; then printf '%s\n' "${DOCKER_STUB_INFO:-}"; exit 0; fi
 printf "%s\n" "$*" >> "$DOCKER_ARGS_FILE"
+echo "$(id -u):$(id -g)" > "$(dirname "$DOCKER_ARGS_FILE")/runner.ids"
 ( cd "$GITHUB_WORKSPACE" && find . -name 'go.*' | sort ) > "$(dirname "$DOCKER_ARGS_FILE")/go.snapshot"
 if [ -n "${DOCKER_STUB_SIGNAL:-}" ]; then kill -s "$DOCKER_STUB_SIGNAL" "$PPID"; fi
 exit 0
@@ -275,6 +278,21 @@ run "${BASE[@]}" IN_SCANNER_IMAGE=registry.internal/mirror/depproof@sha256:abc12
 grep -q -- "registry.internal/mirror/depproof@sha256:abc123 " "$H/docker.args" && ! grep -q -- "depproof:v1" "$H/docker.args"
 check "scanner-image is exactly what runs" \
       "a digest pin or an air-gapped mirror would be ignored and the public tag pulled instead" $?
+
+# The container's user. As root it writes root-owned reports into the runner's workspace, which a reused
+# runner's next checkout cannot clean. HOME must be writable by that uid in every image, including the
+# published ones that predate the Scanner's own non-root user.
+user_arg() { argv | grep -A1 -x -- "--user" | tail -n 1; }
+run "${BASE[@]}"
+[ "$(user_arg)" = "$(cat "$H/runner.ids")" ] && argv | grep -qx -- "HOME=/tmp" \
+  && [ "$(argv | grep -n -x -- "--user" | cut -d: -f1)" -lt "$(argv | grep -n -- "depproof:v1" | cut -d: -f1)" ]
+check "the Scanner runs as the runner's own user, with a HOME it can write" \
+      "reports land root-owned in the workspace, or the Scanner cannot write its caches" $?
+
+run "${BASE[@]}" DOCKER_STUB_INFO="$(printf 'Security Options:\n  seccomp\n   Profile: builtin\n  rootless\n  cgroupns')"
+[ "$(user_arg)" = "0:0" ] && argv | grep -qx -- "HOME=/tmp"
+check "under rootless Docker the container's uid 0, the runner's own user on the host, is used" \
+      "any other uid maps to one that cannot write the workspace, and the scan cannot save its reports" $?
 
 # `usage-from` — the LOADED axis. Its failure mode is unique among the inputs here: a wrong PATH
 # produces a scan indistinguishable from one where the user never set the input at all. Every other

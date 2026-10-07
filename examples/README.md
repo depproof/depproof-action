@@ -31,9 +31,13 @@ found.
 For any other CI — Jenkins, CircleCI, Buildkite — the whole job is one `docker run`:
 
 ```bash
-docker run --rm -v "$PWD":/workspace -w /workspace ghcr.io/depproof/depproof:v1 \
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD":/workspace -w /workspace \
+  ghcr.io/depproof/depproof:v1 \
   scan --discover --root /workspace --output-dir /workspace --markdown --fail-on critical
 ```
+
+`--user` makes the reports it writes yours rather than root's, and `HOME=/tmp` gives that user somewhere
+to keep the Scanner's caches.
 
 The exit code is the gate (`0` clean, `1` findings, `2` scan error) and `depproof-summary.md` is
 what your pipeline displays. If your CI replaces the image's entrypoint to run its own shell — GitLab

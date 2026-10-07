@@ -382,7 +382,7 @@ directly; there is no input for it because it runs after your build, not in the 
   env:
     DEPPROOF_REPORT_TOKEN: ${{ secrets.DEPPROOF_HUB_TOKEN }}   # the same key as report-token
   run: |
-    docker run --rm \
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
       -e DEPPROOF_REPORT_TOKEN \
       -e GITHUB_ACTIONS -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT -e GITHUB_JOB -e GITHUB_WORKFLOW_REF \
       -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
@@ -419,7 +419,7 @@ steps:
       DEPPROOF_REPORT_TOKEN: ${{ secrets.DEPPROOF_HUB_TOKEN }}   # needs the waivers:read scope
       GH_TOKEN: ${{ github.token }}
     run: |
-      docker run --rm -e DEPPROOF_REPORT_TOKEN \
+      docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e DEPPROOF_REPORT_TOKEN \
         -v "$GITHUB_WORKSPACE":/workspace -w /workspace \
         ghcr.io/depproof/depproof:v1 vex \
           --hub https://hub.example.com/api/v1/vex --repo "$GITHUB_REPOSITORY" \

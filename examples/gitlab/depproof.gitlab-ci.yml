@@ -29,6 +29,9 @@
 # The scan.
 # ---------------------------------------------------------------------------------------------
 .depproof:
+  # The image runs as a non-root user (uid 10001). GitLab's Docker and Kubernetes executors check
+  # the repository out writable by any user, so the scan can write its reports beside it. If your
+  # runner turns that off, run this job as the user that owns the checkout (`image: docker: user:`).
   image: ghcr.io/depproof/depproof:v1
   variables:
     DEPPROOF_FAIL_ON: "critical"

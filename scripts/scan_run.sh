@@ -6,6 +6,7 @@
 # The image is a multi-arch manifest at ghcr.io/depproof/depproof:v1 unless `scanner-image` says
 # otherwise (a digest pin, an internal mirror, a pre-release). `--rm` removes the container after exit.
 # The workspace is mounted read-write so SBOMs can be written back; depproof doesn't modify the source.
+# It runs as the runner's own user (see scanner_user_args), so what it writes there belongs to the runner.
 #
 # The exit code is captured rather than allowed to propagate, because the surfaces after the scan
 # matter MOST when it fails — letting `set -e` abort here would mean a failing build renders nothing.
@@ -39,7 +40,9 @@ run_scanner() {
     DOCKER_MOUNTS+=("-v" "${HUB_TMP}/responses:/run/depproof-hub:ro")
   fi
 
+  scanner_user_args
   docker run --rm \
+    "${DOCKER_USER[@]}" \
     "${DOCKER_ENV[@]}" \
     "${DOCKER_MOUNTS[@]}" \
     -v "${GITHUB_WORKSPACE}":/workspace \
@@ -50,6 +53,24 @@ run_scanner() {
   DEPPROOF_EXIT=$?
   set -e
   remove_temporaries || true
+}
+
+# The container's user. As the runner's own uid, every file the Scanner writes into the workspace belongs
+# to the runner: root-owned reports cannot be cleaned by the next checkout on a reused runner, nor edited
+# by a later step. The private key and hub responses it mounts are the runner's, so it can still read them.
+#
+# HOME is /tmp because an image built before the Scanner had its own non-root user has no HOME this uid
+# can write, and the Scanner keeps its caches there. Both images work with these arguments.
+#
+# Rootless Docker is the exception. There, uid 0 in the container is the runner's own unprivileged user on
+# the host, and any other uid maps to a subordinate one that cannot write the workspace at all.
+scanner_user_args() {
+  if docker info 2>/dev/null | grep -Eqi '^[[:space:]]*rootless[[:space:]]*$|name=rootless|rootless: *true'; then
+    DOCKER_USER=("--user" "0:0")
+  else
+    DOCKER_USER=("--user" "$(id -u):$(id -g)")
+  fi
+  DOCKER_USER+=("-e" "HOME=/tmp")
 }
 
 # The original travels with the release: on a tag build, attach the SBOM files the scan just wrote to
